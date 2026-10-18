@@ -1,0 +1,14 @@
+services:
+  jaeger:
+    image: jaegertracing/jaeger:${JAEGER_VERSION}
+    command: ["--config", "/etc/jaeger/jaeger.yaml"]
+    environment:
+      - OTEL_TRACES_SAMPLER=always_off
+    mem_limit: 1g
+    ports: ["16686:16686"]
+    volumes: ["./jaeger.yaml:/etc/jaeger/jaeger.yaml:ro"]
+
+networks:
+  default:
+    name: tcc
+    external: true

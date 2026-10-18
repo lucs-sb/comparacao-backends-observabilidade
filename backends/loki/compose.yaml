@@ -1,0 +1,18 @@
+services:
+  loki:
+    image: grafana/loki:${LOKI_VERSION}
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    mem_limit: 3g
+    ports: ["3100:3100"]
+    volumes:
+      - ./loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+
+volumes:
+  loki-data:
+    name: loki-data
+
+networks:
+  default:
+    name: tcc
+    external: true

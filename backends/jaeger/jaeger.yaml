@@ -1,0 +1,43 @@
+service:
+  extensions: [jaeger_storage, jaeger_query, healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+  jaeger_query:
+    storage:
+      traces: es_main
+    http:
+      endpoint: 0.0.0.0:16686
+  jaeger_storage:
+    backends:
+      es_main:
+        elasticsearch:
+          server_urls: [http://elasticsearch:9200]
+          indices:
+            index_prefix: jaeger-main
+            spans: {shards: 1, replicas: 0}
+            services: {shards: 1, replicas: 0}
+            dependencies: {shards: 1, replicas: 0}
+            sampling: {shards: 1, replicas: 0}
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: es_main

@@ -1,0 +1,16 @@
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:${VM_VERSION}
+    command: ["-storageDataPath=/storage", "-search.disableCache"]
+    mem_limit: 3g
+    ports: ["8428:8428"]
+    volumes: ["vm-data:/storage"]
+
+volumes:
+  vm-data:
+    name: vm-data
+
+networks:
+  default:
+    name: tcc
+    external: true

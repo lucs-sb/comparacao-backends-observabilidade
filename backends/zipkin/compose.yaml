@@ -1,0 +1,16 @@
+services:
+  zipkin:
+    image: openzipkin/zipkin-slim:${ZIPKIN_VERSION}
+    environment:
+      - STORAGE_TYPE=elasticsearch
+      - ES_HOSTS=http://elasticsearch:9200
+      - ES_INDEX_SHARDS=1
+      - ES_INDEX_REPLICAS=0
+      - JAVA_OPTS=-Xms512m -Xmx768m
+    mem_limit: 1g
+    ports: ["9411:9411"]
+
+networks:
+  default:
+    name: tcc
+    external: true
