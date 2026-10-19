@@ -22,3 +22,9 @@ class Elasticsearch(Backend):
         # refresh torna os documentos visíveis à contagem, flush grava o translog nos segmentos
         requests.post(f"{self.url}/_refresh", timeout=60).raise_for_status()
         requests.post(f"{self.url}/_flush?wait_if_ongoing=true", timeout=60).raise_for_status()
+
+    def subir(self, espera=180):
+        super().subir(espera)
+        requests.put(f"{self.url}/_component_template/logs-otel@custom", timeout=30, json={
+            "template": {"settings": {"number_of_shards": 1, "number_of_replicas": 0}}
+        }).raise_for_status()
