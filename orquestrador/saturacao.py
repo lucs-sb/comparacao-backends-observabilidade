@@ -52,8 +52,12 @@ def ler_collector(sinal):
     return valores
 
 
-def _iniciar_telemetrygen(par, taxa, duracao):
-    """Roda o telemetrygen em segundo plano, com a taxa total dividida entre os workers."""
+def _iniciar_telemetrygen(par, taxa, duracao, registro):
+    """Roda o telemetrygen em segundo plano, com a taxa total dividida entre os workers.
+
+    A saída vai para um arquivo. Com um pipe que ninguém lê, o telemetrygen trava ao
+    encher o buffer e nunca termina.
+    """
     por_worker = max(1, round(taxa / WORKERS))
     comum = ["--rate", str(por_worker), "--workers", str(WORKERS),
              "--duration", f"{duracao}s", "--service", "tcc-teste"]
@@ -66,7 +70,7 @@ def _iniciar_telemetrygen(par, taxa, duracao):
     return subprocess.Popen(
         ["docker", "run", "--rm", "--name", CONTEINER, "--network", "tcc", *hosts_extras(),
          geradores.TELEMETRYGEN, *args, "--otlp-endpoint", "otelcol:4317", "--otlp-insecure"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+        stdout=registro, stderr=subprocess.STDOUT,
     )
 
 
@@ -112,14 +116,22 @@ def rodar_degraus(par, taxas, duracao, pasta):
         for numero, taxa in enumerate(taxas, start=1):
             print(f"  degrau {numero}: {round(taxa)} itens/s por {duracao} s", flush=True)
             inicio = time.time()
-            processo = _iniciar_telemetrygen(par, taxa, duracao)
+            registro = open(pasta / f"gerador_degrau{numero}.log", "w")
+            processo = _iniciar_telemetrygen(par, taxa, duracao, registro)
             time.sleep(ACOMODACAO)
             amostras = []
             fim = inicio + duracao - ACOMODACAO
             while time.time() < fim:
                 amostras.append((time.time(), ler_collector(sinal)))
                 time.sleep(AMOSTRAGEM)
-            processo.wait()
+            try:
+                processo.wait(timeout=duracao + 60)
+            except subprocess.TimeoutExpired:
+                subprocess.run(["docker", "rm", "-f", CONTEINER], capture_output=True)
+                raise RuntimeError(f"o telemetrygen não terminou no degrau {numero}, "
+                                   f"ver gerador_degrau{numero}.log")
+            finally:
+                registro.close()
             resultado = {"degrau": numero, "inicio": round(inicio, 3), "fim": round(time.time(), 3),
                          **avaliar(amostras, taxa)}
             degraus.append(resultado)
