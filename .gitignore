@@ -3,3 +3,4 @@ demo/opentelemetry-demo/
 consultas/*.csv
 __pycache__/
 .DS_Store
+.csv
