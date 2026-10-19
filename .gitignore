@@ -4,3 +4,4 @@ consultas/*.csv
 __pycache__/
 .DS_Store
 .csv
+ambiente.env

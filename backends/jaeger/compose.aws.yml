@@ -1,0 +1,5 @@
+# Só na AWS: o Collector, na instância 2, envia os spans pela rede privada.
+# No MacBook essas portas ficam fechadas, porque o Collector isolado já ocupa 4317 e 4318.
+services:
+  jaeger:
+    ports: ["4317:4317", "4318:4318"]

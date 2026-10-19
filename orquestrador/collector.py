@@ -1,20 +1,21 @@
 """Collector isolado: subida por par e leitura das métricas internas."""
-import os
 import subprocess
 import time
 
 import requests
 
-from config import ARQUIVO_VERSOES, RAIZ
+from config import ARQUIVO_VERSOES, HOST_DEMO, RAIZ, arquivos_compose, docker_em
 
-METRICAS = "http://localhost:8888/metrics"
+METRICAS = f"http://{HOST_DEMO}:8888/metrics"
 
 
 def _compose(par, *args):
+    pasta = RAIZ / "collector"
     subprocess.run(
-        ["docker", "compose", "--env-file", str(ARQUIVO_VERSOES), *args],
-        cwd=RAIZ / "collector",
-        env={**os.environ, "PAR": par},
+        ["docker", "compose", "--env-file", str(ARQUIVO_VERSOES),
+         *arquivos_compose(pasta), *args],
+        cwd=pasta,
+        env={**docker_em(HOST_DEMO), "PAR": par},
         check=True,
         capture_output=True,
     )

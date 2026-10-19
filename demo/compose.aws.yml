@@ -1,0 +1,10 @@
+# Só na AWS: os nomes dos backends apontam para o IP privado da instância 1.
+services:
+  otel-collector:
+    extra_hosts:
+      - "loki:${IP_BACKEND}"
+      - "elasticsearch:${IP_BACKEND}"
+      - "jaeger:${IP_BACKEND}"
+      - "zipkin:${IP_BACKEND}"
+      - "prometheus:${IP_BACKEND}"
+      - "victoriametrics:${IP_BACKEND}"
