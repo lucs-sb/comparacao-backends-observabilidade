@@ -1,0 +1,18 @@
+services:
+  otelcol:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:${OTELCOL_VERSION}
+    command: ["--config=/etc/otelcol/base.yaml", "--config=/etc/otelcol/${PAR}.yaml"]
+    mem_limit: 2g
+    ports: ["4317:4317", "4318:4318", "8888:8888"]
+    volumes:
+      - ./:/etc/otelcol:ro
+      - flog-logs:/var/log/flog:ro
+
+volumes:
+  flog-logs:
+    name: flog-logs
+
+networks:
+  default:
+    name: tcc
+    external: true
