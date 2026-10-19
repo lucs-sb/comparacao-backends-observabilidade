@@ -16,7 +16,7 @@ class Prometheus(Backend):
         return r.json()["data"]["result"]
 
     def contar(self):
-        resultado = self.consultar(f'count({{__name__=~"{self.prefixo}.*"}})')
+        resultado = self.consultar(f'count(last_over_time({{__name__=~"{self.prefixo}.*"}}[1h]))')
         return int(resultado[0]["value"][1]) if resultado else 0
 
     def nomes(self):
