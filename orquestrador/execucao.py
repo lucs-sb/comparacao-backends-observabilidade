@@ -1,0 +1,158 @@
+"""Roteiro de uma execução, nos seis passos da seção 4.7.
+
+Uso, a partir da pasta orquestrador, para testar com uma ingestão curta no Loki:
+    python execucao.py teste
+"""
+import json
+import subprocess
+import sys
+import time
+from contextlib import ExitStack
+from dataclasses import asdict, dataclass
+
+import collector
+import geradores
+from backends.elasticsearch import Elasticsearch
+from backends.jaeger import Jaeger
+from backends.loki import Loki
+from backends.prometheus import Prometheus
+from backends.victoriametrics import VictoriaMetrics
+from backends.zipkin import Zipkin
+from config import HOST_BACKEND, HOST_DEMO, NA_AWS, VERSOES
+from medicao import RESULTADOS, Medicao, resumir, subir_cadvisor
+from verificar import ESPERA_LOTE, TODOS, medir_disco_estavel
+
+# ferramenta: (classe, arquivo de par do Collector ou None quando a carga vai direto ao backend)
+FERRAMENTAS = {
+    "loki": (Loki, "logs-loki"),
+    "elasticsearch": (Elasticsearch, "logs-es"),
+    "jaeger": (Jaeger, "traces-jaeger"),
+    "zipkin": (Zipkin, "traces-zipkin"),
+    "prometheus": (Prometheus, None),
+    "victoriametrics": (VictoriaMetrics, None),
+}
+SINAIS = {"logs": "log_records", "traces": "spans", "metricas": "metric_points"}
+
+
+@dataclass
+class Execucao:
+    experimento: str        # saturacao, ingestao, realista, consulta ou cardinalidade
+    par: str                # logs, traces ou metricas
+    ferramenta: str         # chave de FERRAMENTAS
+    condicao: str           # nível da carga, por exemplo 50pct ou 100mil
+    repeticao: int
+    aquecimento_s: int = 120  # descartado no resumo de CPU e memória
+
+    @property
+    def pasta(self):
+        return (RESULTADOS / self.experimento / self.par / self.ferramenta
+                / self.condicao / f"rep{self.repeticao}")
+
+    @property
+    def concluida(self):
+        # o resumo é gravado por último, então só existe se a execução terminou
+        return (self.pasta / "resumo.json").exists()
+
+
+def esvaziar_cache():
+    """Esvazia o cache de disco das instâncias 1 e 2. No MacBook, não faz nada."""
+    if not NA_AWS:
+        return
+    for host in (HOST_BACKEND, HOST_DEMO):
+        subprocess.run(
+            ["ssh", f"ubuntu@{host}", "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null"],
+            check=True, capture_output=True,
+        )
+
+
+def executar(execucao, carga):
+    """Executa o roteiro completo. carga é uma função sem argumentos que aplica a carga."""
+    classe, par_collector = FERRAMENTAS[execucao.ferramenta]
+    backend = classe()
+    usa_collector = par_collector is not None
+    execucao.pasta.mkdir(parents=True, exist_ok=True)
+    resumo = {"execucao": asdict(execucao), "versoes": VERSOES}
+
+    def etapa(texto):
+        print(f"[{execucao.ferramenta} {execucao.condicao} rep{execucao.repeticao}] {texto}", flush=True)
+
+    # 1. Limpeza do ambiente
+    etapa("limpando o ambiente")
+    collector.parar()
+    for classe_backend in TODOS:
+        classe_backend().limpar()
+    esvaziar_cache()
+
+    # 2. Inicialização, com o volume vazio medido para ser descontado depois (A2)
+    etapa("subindo cAdvisor e backend")
+    subir_cadvisor(HOST_BACKEND)
+    if usa_collector:
+        subir_cadvisor(HOST_DEMO)
+    backend.subir()
+    leituras, _, _ = medir_disco_estavel(backend)
+    resumo["disco_vazio_kib"] = leituras[-1]
+    if usa_collector:
+        etapa(f"subindo o Collector com {par_collector}.yaml")
+        collector.subir(par_collector)
+
+    # 3. Aplicação da carga, com CPU e memória lidas a cada segundo nas duas instâncias
+    etapa("aplicando a carga")
+    with ExitStack() as medicoes:
+        medicoes.enter_context(Medicao(execucao.pasta / "recursos_backend.csv", HOST_BACKEND))
+        if usa_collector:
+            medicoes.enter_context(Medicao(execucao.pasta / "recursos_collector.csv", HOST_DEMO))
+        resumo["inicio_carga"] = time.time()
+        carga()
+        resumo["fim_carga"] = time.time()
+        time.sleep(ESPERA_LOTE)  # o Collector esvazia a fila ainda dentro da medição
+
+    # 4. Registro do que foi enviado, antes de parar o Collector
+    if usa_collector:
+        sinal = SINAIS[execucao.par]
+        resumo["enviados"] = collector.enviados(sinal)
+        resumo["falhas_collector"] = collector.falhas(sinal) or 0
+        collector.parar()
+
+    # 5. Descarga e medição do disco
+    etapa("descarregando, contando e medindo o disco")
+    backend.descarregar()
+    resumo["armazenados"] = backend.contar()
+    if resumo.get("enviados"):
+        perda = resumo["enviados"] - resumo["armazenados"]
+        resumo["perda_pct"] = round(100 * perda / resumo["enviados"], 3)
+    leituras, estavel, espera = medir_disco_estavel(backend)
+    resumo["disco_final_kib"] = leituras[-1]
+    resumo["disco_liquido_kib"] = leituras[-1] - resumo["disco_vazio_kib"]
+    resumo["disco_estavel"] = estavel
+    resumo["espera_disco_s"] = round(espera)
+
+    # 6. Exportação: os CSV brutos já estão na pasta, e o resumo marca a execução como concluída
+    resumo["recursos_backend"] = resumir(execucao.pasta / "recursos_backend.csv",
+                                         execucao.aquecimento_s)
+    if usa_collector:
+        resumo["recursos_collector"] = resumir(execucao.pasta / "recursos_collector.csv",
+                                               execucao.aquecimento_s)
+    with open(execucao.pasta / "resumo.json", "w") as arquivo:
+        json.dump(resumo, arquivo, indent=2, ensure_ascii=False)
+    etapa(f"concluída, resultados em {execucao.pasta}")
+    return resumo
+
+
+def teste():
+    """Ingestão de 1000 logs por segundo no Loki durante 60 segundos."""
+    execucao = Execucao("teste", "logs", "loki", "1000ps", 1, aquecimento_s=10)
+
+    def carga():
+        geradores.telemetrygen("logs", "--rate", "1000", "--duration", "60s",
+                               "--body", "teste tcc", "--service", "tcc-teste")
+
+    resumo = executar(execucao, carga)
+    print(json.dumps({k: v for k, v in resumo.items() if k != "versoes"},
+                     indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["teste"]:
+        teste()
+    else:
+        sys.exit(__doc__)
