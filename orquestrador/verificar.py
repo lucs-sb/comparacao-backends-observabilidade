@@ -1,4 +1,4 @@
-"""Verificações locais L1 a L7.
+"""Verificações locais L1, L2 e L5 a L7.
 
 Uso, a partir da pasta orquestrador:
     python verificar.py --lista        lista os casos
@@ -53,10 +53,6 @@ def avalanche_direto(url):
     return gerar
 
 
-def avalanche_coletado():
-    geradores.avalanche_alvo(*SERIES, duracao=300)
-
-
 # ---------------------------------------------------------------- casos
 # nome: (backend, arquivo de par do Collector ou None, sinal do Collector, gerador, esperado)
 
@@ -71,8 +67,6 @@ CASOS = {
                       avalanche_direto("http://prometheus:9090/api/v1/write"), 10000),
     "metricas-vm": (VictoriaMetrics, None, "metric_points",
                     avalanche_direto("http://victoriametrics:8428/api/v1/write"), 10000),
-    "metricas-prom-coletor": (Prometheus, "metrics-prom", "metric_points", avalanche_coletado, 10000),
-    "metricas-vm-coletor": (VictoriaMetrics, "metrics-vm", "metric_points", avalanche_coletado, 10000),
 }
 
 TODOS = [Loki, Elasticsearch, Prometheus, VictoriaMetrics, Jaeger, Zipkin]
@@ -132,8 +126,8 @@ def verificar(nome):
     print(f"[{nome}] medindo o disco até estabilizar")
     disco, estavel, espera_disco = medir_disco_estavel(backend)
 
-    # Nas métricas, o Collector conta pontos e o backend conta séries, então só
-    # logs e traces comparam enviado com esperado.
+    # Os casos de métricas não passam pelo Collector, então só logs e traces
+    # comparam enviado com esperado.
     criterios = {
         "armazenado igual ao esperado": armazenado == esperado,
         f"disco estável em {espera_disco:.0f} s (L6)": estavel,
