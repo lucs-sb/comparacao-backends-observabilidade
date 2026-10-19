@@ -18,8 +18,9 @@ from backends.prometheus import Prometheus
 from backends.victoriametrics import VictoriaMetrics
 from backends.zipkin import Zipkin
 
-ESPERA_LOTE = 20     # segundos para o Collector esvaziar a fila após o gerador terminar
-INTERVALO_DISCO = 30  # segundos entre as duas medidas de disco (L6)
+ESPERA_LOTE = 20      # segundos para o Collector esvaziar a fila após o gerador terminar
+INTERVALO_DISCO = 30  # segundos entre medidas de disco (L6)
+LIMITE_DISCO = 300    # segundos de espera máxima pela estabilização do disco
 
 # ---------------------------------------------------------------- geradores
 
@@ -84,6 +85,23 @@ def parar_tudo():
         classe().limpar()
 
 
+def medir_disco_estavel(backend):
+    """Mede o volume a cada INTERVALO_DISCO até duas leituras seguidas coincidirem.
+
+    Alguns backends, como o VictoriaMetrics, fundem partes em segundo plano depois da
+    descarga, então uma única leitura pode pegar o volume no meio dessa reorganização.
+    Devolve as leituras, se estabilizou e o tempo até estabilizar.
+    """
+    leituras = [backend.medir_disco()]
+    inicio = time.time()
+    while time.time() - inicio < LIMITE_DISCO:
+        time.sleep(INTERVALO_DISCO)
+        leituras.append(backend.medir_disco())
+        if leituras[-1] == leituras[-2]:
+            return leituras, True, time.time() - inicio
+    return leituras, False, time.time() - inicio
+
+
 def verificar(nome):
     classe, par, sinal, gerar, esperado = CASOS[nome]
     backend = classe()
@@ -102,20 +120,23 @@ def verificar(nome):
     print(f"[{nome}] carga concluída em {time.time() - inicio:.0f} s, aguardando {ESPERA_LOTE} s")
     time.sleep(ESPERA_LOTE)
 
-    backend.descarregar()
-    armazenado = backend.contar()
-    disco = [backend.medir_disco()]
-    time.sleep(INTERVALO_DISCO)
-    disco.append(backend.medir_disco())
-
+    # Lê as contagens do Collector e o desliga antes de medir, para que nada mais
+    # chegue ao backend durante a descarga e as medidas de disco (L6).
     enviado = collector.enviados(sinal) if par else None
     falhas = (collector.falhas(sinal) or 0) if par else None
+    if par:
+        collector.parar()
+
+    backend.descarregar()
+    armazenado = backend.contar()
+    print(f"[{nome}] medindo o disco até estabilizar")
+    disco, estavel, espera_disco = medir_disco_estavel(backend)
 
     # Nas métricas, o Collector conta pontos e o backend conta séries, então só
     # logs e traces comparam enviado com esperado.
     criterios = {
         "armazenado igual ao esperado": armazenado == esperado,
-        "disco estável (L6)": disco[0] == disco[1],
+        f"disco estável em {espera_disco:.0f} s (L6)": estavel,
     }
     if par:
         criterios["sem falhas no Collector"] = falhas == 0
