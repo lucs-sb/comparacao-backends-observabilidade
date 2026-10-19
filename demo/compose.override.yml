@@ -1,0 +1,16 @@
+# Ajustes no Collector da Demo, carregados depois de compose.yaml e compose.full.yaml.
+services:
+  otel-collector:
+    deploy:
+      resources:
+        limits:
+          memory: ${COLLECTOR_MEM:-1G}   # 1G no MacBook, 8G na AWS
+    ports:
+      - "8888:8888"                     # métricas internas, lidas pelo orquestrador
+    networks:
+      - default
+      - tcc                             # alcança os backends pelo nome
+
+networks:
+  tcc:
+    external: true

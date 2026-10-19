@@ -1,0 +1,35 @@
+# Extras do Collector da Demo para o par traces-zipkin.
+# Carregado por último, substitui só o que está aqui. Listas são substituídas, não somadas.
+#
+# Sinal avaliado: traces, enviado a Zipkin.
+# Os outros sinais vão para o exportador nop, que descarta sem custo, para que o
+# Collector entregue ao backend apenas o sinal do par.
+# O conector span_metrics continua no pipeline de traces, porque o pipeline de
+# métricas da Demo o usa como receptor.
+
+exporters:
+  nop:
+  zipkin:
+    endpoint: http://zipkin:9411/api/v2/spans
+
+service:
+  pipelines:
+    traces:
+      exporters: [zipkin, span_metrics]
+    metrics:
+      exporters: [nop]
+    logs:
+      exporters: [nop]
+  telemetry:
+    # A Demo envia a telemetria do próprio Collector para ele mesmo, por OTLP, o que
+    # levaria métricas e logs do Collector ao backend avaliado. Aqui as métricas internas
+    # ficam só na porta 8888, para a contagem do orquestrador, e os logs não são exportados.
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+    logs:
+      processors: []
