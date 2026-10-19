@@ -11,6 +11,7 @@ Ferramentas: loki, elasticsearch, jaeger, zipkin. O par de métricas fica para u
 import argparse
 import csv
 import json
+import math
 import subprocess
 import sys
 import time
@@ -22,7 +23,7 @@ from config import HOST_DEMO, docker_em, hosts_extras
 from execucao import SINAIS, Execucao, executar
 
 PARES = {"loki": "logs", "elasticsearch": "logs", "jaeger": "traces", "zipkin": "traces"}
-WORKERS = 4         # processos do telemetrygen, a taxa é dividida entre eles
+POR_WORKER = 1000   # taxa máxima por worker do telemetrygen; acima disso, mais workers
 ACOMODACAO = 10     # segundos ignorados no início e no fim de cada degrau
 AMOSTRAGEM = 5      # segundos entre leituras do Collector dentro do degrau
 TOLERANCIA = 0.95   # abaixo de 95% do esperado, a taxa é considerada não atingida
@@ -55,11 +56,16 @@ def ler_collector(sinal):
 def _iniciar_telemetrygen(par, taxa, duracao, registro):
     """Roda o telemetrygen em segundo plano, com a taxa total dividida entre os workers.
 
+    Cada worker envia um item por vez e espera a resposta do Collector, então a taxa de
+    um worker é limitada pelo tempo de ida e volta na rede. Por isso o número de workers
+    cresce com a taxa, e nenhum deles passa de POR_WORKER itens por segundo.
+
     A saída vai para um arquivo. Com um pipe que ninguém lê, o telemetrygen trava ao
     encher o buffer e nunca termina.
     """
-    por_worker = max(1, round(taxa / WORKERS))
-    comum = ["--rate", str(por_worker), "--workers", str(WORKERS),
+    workers = max(1, math.ceil(taxa / POR_WORKER))
+    por_worker = max(1, round(taxa / workers))
+    comum = ["--rate", str(por_worker), "--workers", str(workers),
              "--duration", f"{duracao}s", "--service", "tcc-teste"]
     if par == "logs":
         args = ["logs", *comum, "--body", CORPO_LOG]
