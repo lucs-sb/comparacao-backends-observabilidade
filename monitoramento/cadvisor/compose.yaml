@@ -1,0 +1,21 @@
+# cAdvisor: CPU e memória de cada contêiner, atualizados a cada segundo.
+# Roda na instância 1 durante todos os experimentos e fica fora das medidas.
+services:
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:${CADVISOR_VERSION}
+    container_name: cadvisor
+    command:
+      - --housekeeping_interval=1s     # atualiza as medidas a cada segundo
+      - --docker_only=true             # só contêineres, sem os processos do sistema
+      - --store_container_labels=false
+      - --enable_metrics=cpu,memory    # só o que o experimento usa, para reduzir o custo próprio
+    ports: ["8080:8080"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices: ["/dev/kmsg"]
+    privileged: true
+    restart: unless-stopped
