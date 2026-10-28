@@ -97,10 +97,12 @@ def avaliar(amostras, alvo):
     capacidade = b["capacidade_fila"]
     fila_cheia = capacidade > 0 and sum(filas[-terco:]) / terco >= 0.8 * capacidade
 
-    if recusados > 0:
-        estado = "recusado"            # o próprio Collector recusou dados, limite de memória
-    elif falhas > 0 or fila_cheia or enviada < TOLERANCIA * aceita:
+    # A saturação do backend vem primeiro: quando ele não acompanha, o Collector acumula
+    # dados até o limite de memória e passa a recusar, mas a causa continua sendo o backend.
+    if falhas > 0 or fila_cheia or enviada < TOLERANCIA * aceita:
         estado = "saturado"            # o backend não acompanhou o que o Collector recebeu
+    elif recusados > 0:
+        estado = "recusado"            # o Collector recusou dados com o backend em dia
     elif aceita < TOLERANCIA * alvo:
         estado = "gerador_limitado"    # a taxa pedida não foi atingida (P5)
     else:
