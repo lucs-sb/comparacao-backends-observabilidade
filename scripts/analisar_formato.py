@@ -1,0 +1,115 @@
+"""Formato dos logs e traces da Demo (P6), a partir dos arquivos do exportador file.
+
+Uso: python3 scripts/analisar_formato.py /tmp/tcc-medicao
+Grava também formato.json na mesma pasta. Usa só a biblioteca padrão do Python.
+"""
+import json
+import statistics
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+
+def resumo(valores):
+    if not valores:
+        return {}
+    ordenados = sorted(valores)
+    return {
+        "n": len(ordenados),
+        "media": round(statistics.fmean(ordenados), 1),
+        "mediana": ordenados[len(ordenados) // 2],
+        "p90": ordenados[int(len(ordenados) * 0.9)],
+        "max": ordenados[-1],
+    }
+
+
+def servico(recurso):
+    for atributo in recurso.get("attributes", []):
+        if atributo["key"] == "service.name":
+            return atributo["value"].get("stringValue", "?")
+    return "?"
+
+
+def texto_do_corpo(corpo):
+    if "stringValue" in corpo:
+        return corpo["stringValue"]
+    return json.dumps(corpo, ensure_ascii=False)  # corpos estruturados contam pelo JSON
+
+
+def analisar_logs(arquivo):
+    corpos, atributos, tamanhos, recursos = [], [], [], []
+    servicos, severidades = Counter(), Counter()
+    with open(arquivo) as f:
+        for linha in f:
+            for rl in json.loads(linha).get("resourceLogs", []):
+                nome = servico(rl.get("resource", {}))
+                n_recurso = len(rl.get("resource", {}).get("attributes", []))
+                for sl in rl.get("scopeLogs", []):
+                    for log in sl.get("logRecords", []):
+                        servicos[nome] += 1
+                        severidades[log.get("severityText", "")] += 1
+                        corpos.append(len(texto_do_corpo(log.get("body", {})).encode()))
+                        atributos.append(len(log.get("attributes", [])))
+                        tamanhos.append(len(json.dumps(log, ensure_ascii=False).encode()))
+                        recursos.append(n_recurso)
+    return {
+        "registros": len(corpos),
+        "corpo_bytes": resumo(corpos),
+        "atributos_por_log": resumo(atributos),
+        "atributos_de_recurso": resumo(recursos),
+        "registro_json_bytes": resumo(tamanhos),
+        "servicos": dict(servicos.most_common()),
+        "severidades": dict(severidades.most_common()),
+    }
+
+
+def analisar_traces(arquivo):
+    spans_por_trace = Counter()
+    servicos_por_trace = defaultdict(set)
+    atributos, eventos, tamanhos, duracoes = [], [], [], []
+    servicos = Counter()
+    with open(arquivo) as f:
+        for linha in f:
+            for rs in json.loads(linha).get("resourceSpans", []):
+                nome = servico(rs.get("resource", {}))
+                for ss in rs.get("scopeSpans", []):
+                    for span in ss.get("spans", []):
+                        spans_por_trace[span["traceId"]] += 1
+                        servicos_por_trace[span["traceId"]].add(nome)
+                        servicos[nome] += 1
+                        atributos.append(len(span.get("attributes", [])))
+                        eventos.append(len(span.get("events", [])))
+                        tamanhos.append(len(json.dumps(span, ensure_ascii=False).encode()))
+                        inicio = int(span.get("startTimeUnixNano", 0))
+                        fim = int(span.get("endTimeUnixNano", 0))
+                        if fim >= inicio > 0:
+                            duracoes.append(round((fim - inicio) / 1e6, 2))  # ms
+    return {
+        "spans": len(atributos),
+        "traces": len(spans_por_trace),
+        "spans_por_trace": resumo(list(spans_por_trace.values())),
+        "servicos_por_trace": resumo([len(s) for s in servicos_por_trace.values()]),
+        "atributos_por_span": resumo(atributos),
+        "eventos_por_span": resumo(eventos),
+        "span_json_bytes": resumo(tamanhos),
+        "duracao_ms": resumo(duracoes),
+        "servicos": dict(servicos.most_common()),
+    }
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit(__doc__)
+    pasta = Path(sys.argv[1])
+    resultado = {}
+    if (pasta / "logs.jsonl").exists():
+        resultado["logs"] = analisar_logs(pasta / "logs.jsonl")
+    if (pasta / "traces.jsonl").exists():
+        resultado["traces"] = analisar_traces(pasta / "traces.jsonl")
+    texto = json.dumps(resultado, indent=2, ensure_ascii=False)
+    (pasta / "formato.json").write_text(texto)
+    print(texto)
+
+
+if __name__ == "__main__":
+    main()

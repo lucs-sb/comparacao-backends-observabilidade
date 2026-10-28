@@ -1,0 +1,6 @@
+# Só para a medição do formato (P6): a pasta onde o Collector da Demo grava os arquivos.
+# A pasta precisa existir com permissão de escrita, porque o Collector não roda como root.
+services:
+  otel-collector:
+    volumes:
+      - /tmp/tcc-medicao:/medicao

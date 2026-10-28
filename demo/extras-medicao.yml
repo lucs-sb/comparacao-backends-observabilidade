@@ -1,0 +1,29 @@
+# Extras do Collector da Demo para medir o formato dos itens (P6).
+# Grava em disco os logs e traces recebidos, sem enviar nada a backend algum.
+# O conector span_metrics continua no pipeline de traces, porque o de métricas o usa.
+
+exporters:
+  nop:
+  file/logs:
+    path: /medicao/logs.jsonl
+  file/traces:
+    path: /medicao/traces.jsonl
+
+service:
+  pipelines:
+    traces:
+      exporters: [file/traces, span_metrics]
+    metrics:
+      exporters: [nop]
+    logs:
+      exporters: [file/logs]
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+    logs:
+      processors: []
