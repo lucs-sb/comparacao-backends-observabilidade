@@ -88,17 +88,18 @@ def avaliar(amostras, alvo):
     falhas = (b["falhas_envio"] - a["falhas_envio"]) + (b["falhas_fila"] - a["falhas_fila"])
     recusados = b["recusados"] - a["recusados"]
 
-    # fila crescente: o último terço do degrau tem fila média maior que o primeiro terço,
-    # com diferença acima de 5% da capacidade
+    # Fila cheia: no último terço do degrau, a fila média ocupa 80% ou mais da capacidade.
+    # O acúmulo em si já aparece em "enviada abaixo de aceita". Uma regra baseada só em
+    # crescimento disparava com oscilações de um ou dois lotes em filas pequenas, como a de
+    # 10 lotes do exportador do Elasticsearch.
     filas = [v["fila"] for _, v in amostras]
     terco = max(1, len(filas) // 3)
     capacidade = b["capacidade_fila"]
-    crescimento = sum(filas[-terco:]) / terco - sum(filas[:terco]) / terco
-    fila_crescente = capacidade > 0 and crescimento > 0.05 * capacidade
+    fila_cheia = capacidade > 0 and sum(filas[-terco:]) / terco >= 0.8 * capacidade
 
     if recusados > 0:
         estado = "recusado"            # o próprio Collector recusou dados, limite de memória
-    elif falhas > 0 or fila_crescente or enviada < TOLERANCIA * aceita:
+    elif falhas > 0 or fila_cheia or enviada < TOLERANCIA * aceita:
         estado = "saturado"            # o backend não acompanhou o que o Collector recebeu
     elif aceita < TOLERANCIA * alvo:
         estado = "gerador_limitado"    # a taxa pedida não foi atingida (P5)
