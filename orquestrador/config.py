@@ -29,12 +29,13 @@ AMBIENTE = _ler(ARQUIVO_AMBIENTE)
 NA_AWS = "IP_BACKEND" in AMBIENTE
 HOST_BACKEND = AMBIENTE.get("IP_BACKEND", "localhost")
 HOST_DEMO = AMBIENTE.get("IP_DEMO", "localhost")
+HOST_CARGA = AMBIENTE.get("IP_CARGA", "localhost")  # a própria máquina do orquestrador
 
 
 def docker_em(host):
     """Variáveis de ambiente para que os comandos docker atuem na instância indicada."""
     env = {**os.environ, **AMBIENTE}
-    if NA_AWS:
+    if NA_AWS and host != HOST_CARGA:  # na instância 3, o Docker é o local
         env["DOCKER_HOST"] = f"ssh://ubuntu@{host}"
     return env
 
