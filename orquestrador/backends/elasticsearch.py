@@ -20,8 +20,8 @@ class Elasticsearch(Backend):
 
     def descarregar(self):
         # refresh torna os documentos visíveis à contagem, flush grava o translog nos segmentos
-        requests.post(f"{self.url}/_refresh", timeout=60).raise_for_status()
-        requests.post(f"{self.url}/_flush?wait_if_ongoing=true", timeout=60).raise_for_status()
+        requests.post(f"{self.url}/_refresh", timeout=600).raise_for_status()
+        requests.post(f"{self.url}/_flush?wait_if_ongoing=true", timeout=600).raise_for_status()
 
     def subir(self, espera=180):
         super().subir(espera)
