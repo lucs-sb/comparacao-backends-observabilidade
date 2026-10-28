@@ -9,7 +9,7 @@ services:
       - --docker_only=true             # só contêineres, sem os processos do sistema
       - --store_container_labels=false
       - --enable_metrics=cpu,memory    # só o que o experimento usa, para reduzir o custo próprio
-    ports: ["8080:8080"]
+    ports: ["8089:8080"]               # 8089 no host, porque a Demo usa a 8080 na instância 2
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro

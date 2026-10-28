@@ -21,6 +21,7 @@ METRICAS = {
 }
 NOME = re.compile(r'name="([^"]+)"')
 IGNORADOS = {"cadvisor"}
+PORTA = 8089  # porta do cAdvisor no host; a 8080 fica livre para a Demo
 
 
 def _compose(host, *args):
@@ -36,7 +37,7 @@ def subir_cadvisor(host=HOST_BACKEND, espera=60):
     limite = time.time() + espera
     while time.time() < limite:
         try:
-            if requests.get(f"http://{host}:8080/healthz", timeout=2).ok:
+            if requests.get(f"http://{host}:{PORTA}/healthz", timeout=2).ok:
                 return
         except requests.RequestException:
             pass
@@ -46,7 +47,7 @@ def subir_cadvisor(host=HOST_BACKEND, espera=60):
 
 def ler(host=HOST_BACKEND):
     """Uma leitura de todos os contêineres: {nome: {"cpu_s": ..., "memoria_bytes": ...}}."""
-    texto = requests.get(f"http://{host}:8080/metrics", timeout=5).text
+    texto = requests.get(f"http://{host}:{PORTA}/metrics", timeout=5).text
     valores = {}
     for linha in texto.splitlines():
         if linha.startswith("#"):
