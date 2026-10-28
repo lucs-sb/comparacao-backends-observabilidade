@@ -7,7 +7,7 @@ services:
       - --web.enable-remote-write-receiver
       - --web.enable-otlp-receiver
       - --web.enable-admin-api
-    mem_limit: 3g
+    mem_limit: ${BACKEND_MEM:-3g}
     ports: ["9090:9090"]
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro

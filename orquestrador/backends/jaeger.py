@@ -11,6 +11,7 @@ class Jaeger(Backend):
 
     def __init__(self):
         self.es = Elasticsearch()
+        self.es.perfil = "traces"      # Elasticsearch com a memória do par de traces (L9)
 
     def subir(self, espera=180):
         self.es.subir(espera)          # o Jaeger encerra se o Elasticsearch não estiver pronto

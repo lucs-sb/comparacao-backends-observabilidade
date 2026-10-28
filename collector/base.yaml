@@ -6,7 +6,7 @@ receivers:
 processors:
   memory_limiter:
     check_interval: 1s
-    limit_mib: 1536
+    limit_percentage: 85
   batch: {}
 service:
   telemetry:

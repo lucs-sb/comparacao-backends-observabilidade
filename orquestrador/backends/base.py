@@ -19,13 +19,18 @@ class Backend:
         if "url" in cls.__dict__:
             cls.url = cls.url.replace("localhost", HOST_BACKEND)
 
+    def _variaveis(self):
+        """Variáveis extras para o compose. As classes que precisam de valores próprios,
+        como o Elasticsearch com memória diferente em cada par, sobrescrevem este método."""
+        return {}
+
     def _compose(self, *args):
         pasta = RAIZ / "backends" / self.pasta
         subprocess.run(
             ["docker", "compose", "--env-file", str(ARQUIVO_VERSOES),
              *arquivos_compose(pasta), *args],
             cwd=pasta,
-            env=docker_em(HOST_BACKEND),
+            env={**docker_em(HOST_BACKEND), **self._variaveis()},
             check=True,
             capture_output=True,
         )

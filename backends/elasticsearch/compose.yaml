@@ -4,8 +4,8 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms1536m -Xmx1536m
-    mem_limit: 3g
+      - ES_JAVA_OPTS=-Xms${ES_HEAP:-1536m} -Xmx${ES_HEAP:-1536m}
+    mem_limit: ${ES_MEM:-3g}
     ports: ["9200:9200"]
     volumes: ["es-data:/usr/share/elasticsearch/data"]
 

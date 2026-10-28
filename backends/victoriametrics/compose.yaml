@@ -2,7 +2,7 @@ services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:${VM_VERSION}
     command: ["-storageDataPath=/storage", "-search.disableCache"]
-    mem_limit: 3g
+    mem_limit: ${BACKEND_MEM:-3g}
     ports: ["8428:8428"]
     volumes: ["vm-data:/storage"]
 

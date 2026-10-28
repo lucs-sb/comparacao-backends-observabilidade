@@ -2,7 +2,7 @@ services:
   loki:
     image: grafana/loki:${LOKI_VERSION}
     command: ["-config.file=/etc/loki/loki.yaml"]
-    mem_limit: 3g
+    mem_limit: ${BACKEND_MEM:-3g}
     ports: ["3100:3100"]
     volumes:
       - ./loki.yaml:/etc/loki/loki.yaml:ro

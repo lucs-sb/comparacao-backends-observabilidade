@@ -6,8 +6,8 @@ services:
       - ES_HOSTS=http://elasticsearch:9200
       - ES_INDEX_SHARDS=1
       - ES_INDEX_REPLICAS=0
-      - JAVA_OPTS=-Xms512m -Xmx768m
-    mem_limit: 1g
+      - JAVA_OPTS=-Xms${ZIPKIN_HEAP:-768m} -Xmx${ZIPKIN_HEAP:-768m}
+    mem_limit: ${TRACES_MEM:-1g}
     ports: ["9411:9411"]
 
 networks:
