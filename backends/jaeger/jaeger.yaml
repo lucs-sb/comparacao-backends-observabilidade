@@ -21,7 +21,7 @@ extensions:
         elasticsearch:
           server_urls: [http://elasticsearch:9200]
           bulk_processing:
-            workers: 4
+            workers: 10
           indices:
             index_prefix: jaeger-main
             spans: {shards: 1, replicas: 0}
