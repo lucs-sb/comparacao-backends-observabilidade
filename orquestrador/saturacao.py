@@ -11,23 +11,21 @@ Ferramentas: loki, elasticsearch, jaeger, zipkin. O par de métricas fica para u
 import argparse
 import csv
 import json
-import math
 import subprocess
 import sys
 import time
 
 import requests
 
+import formato
 import geradores
 from config import HOST_DEMO, docker_em, hosts_extras
 from execucao import SINAIS, Execucao, executar
 
 PARES = {"loki": "logs", "elasticsearch": "logs", "jaeger": "traces", "zipkin": "traces"}
-POR_WORKER = 1000   # taxa máxima por worker do telemetrygen; acima disso, mais workers
 ACOMODACAO = 10     # segundos ignorados no início e no fim de cada degrau
 AMOSTRAGEM = 5      # segundos entre leituras do Collector dentro do degrau
 TOLERANCIA = 0.95   # abaixo de 95% do esperado, a taxa é considerada não atingida
-CORPO_LOG = "teste tcc"  # formato provisório, o definitivo sai de P6
 CONTEINER = "tcc-gerador"
 METRICAS_COLLECTOR = f"http://{HOST_DEMO}:8888/metrics"
 
@@ -53,31 +51,32 @@ def ler_collector(sinal):
     return valores
 
 
-def _iniciar_telemetrygen(par, taxa, duracao, registro):
-    """Roda o telemetrygen em segundo plano, com a taxa total dividida entre os workers.
+def _nomes():
+    return [f"{CONTEINER}-{i}" for i in range(1, len(formato.SERVICOS) + 1)]
 
-    Cada worker envia um item por vez e espera a resposta do Collector, então a taxa de
-    um worker é limitada pelo tempo de ida e volta na rede. Por isso o número de workers
-    cresce com a taxa, e nenhum deles passa de POR_WORKER itens por segundo.
+
+def _remover_geradores():
+    subprocess.run(["docker", "rm", "-f", *_nomes()], capture_output=True)
+
+
+def _iniciar_geradores(par, taxa, duracao, registro):
+    """Um telemetrygen por serviço, em segundo plano, com a taxa dividida igualmente.
 
     A saída vai para um arquivo. Com um pipe que ninguém lê, o telemetrygen trava ao
     encher o buffer e nunca termina.
     """
-    workers = max(1, math.ceil(taxa / POR_WORKER))
-    por_worker = max(1, round(taxa / workers))
-    comum = ["--rate", str(por_worker), "--workers", str(workers),
-             "--duration", f"{duracao}s", "--service", "tcc-teste"]
-    if par == "logs":
-        args = ["logs", *comum, "--body", CORPO_LOG]
-    else:
-        # 1 span pai e 5 filhos por trace; a taxa do telemetrygen conta spans (A1)
-        args = ["traces", *comum, "--child-spans", "5"]
-    subprocess.run(["docker", "rm", "-f", CONTEINER], capture_output=True)
-    return subprocess.Popen(
-        ["docker", "run", "--rm", "--name", CONTEINER, "--network", "tcc", *hosts_extras(),
-         geradores.TELEMETRYGEN, *args, "--otlp-endpoint", "otelcol:4317", "--otlp-insecure"],
-        stdout=registro, stderr=subprocess.STDOUT,
-    )
+    _remover_geradores()
+    taxa_por_servico = taxa / len(formato.SERVICOS)
+    processos = []
+    for nome, servico in zip(_nomes(), formato.SERVICOS):
+        processos.append(subprocess.Popen(
+            ["docker", "run", "--rm", "--name", nome, "--network", "tcc", *hosts_extras(),
+             geradores.TELEMETRYGEN,
+             *formato.argumentos(par, servico, taxa_por_servico, duracao),
+             "--otlp-endpoint", "otelcol:4317", "--otlp-insecure"],
+            stdout=registro, stderr=subprocess.STDOUT,
+        ))
+    return processos
 
 
 def avaliar(amostras, alvo):
@@ -123,18 +122,20 @@ def rodar_degraus(par, taxas, duracao, pasta):
             print(f"  degrau {numero}: {round(taxa)} itens/s por {duracao} s", flush=True)
             inicio = time.time()
             registro = open(pasta / f"gerador_degrau{numero}.log", "w")
-            processo = _iniciar_telemetrygen(par, taxa, duracao, registro)
+            processos = _iniciar_geradores(par, taxa, duracao, registro)
             time.sleep(ACOMODACAO)
             amostras = []
             fim = inicio + duracao - ACOMODACAO
             while time.time() < fim:
                 amostras.append((time.time(), ler_collector(sinal)))
                 time.sleep(AMOSTRAGEM)
+            limite = inicio + duracao + 60
             try:
-                processo.wait(timeout=duracao + 60)
+                for processo in processos:
+                    processo.wait(timeout=max(1, limite - time.time()))
             except subprocess.TimeoutExpired:
-                subprocess.run(["docker", "rm", "-f", CONTEINER], capture_output=True)
-                raise RuntimeError(f"o telemetrygen não terminou no degrau {numero}, "
+                _remover_geradores()
+                raise RuntimeError(f"os geradores não terminaram no degrau {numero}, "
                                    f"ver gerador_degrau{numero}.log")
             finally:
                 registro.close()
@@ -173,7 +174,7 @@ def executar_saturacao(ferramenta, experimento, condicao, repeticao, taxas, dura
     try:
         executar(execucao, carga)
     finally:
-        subprocess.run(["docker", "rm", "-f", CONTEINER], capture_output=True)
+        _remover_geradores()
     print(f"\nvazão máxima: {conclusao.get('vazao_maxima')} itens/s, "
           f"parada por: {conclusao.get('parada')}, resultados em {execucao.pasta}")
     return conclusao
