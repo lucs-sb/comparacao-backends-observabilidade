@@ -1,6 +1,8 @@
 auth_enabled: false
 server:
   http_listen_port: 3100
+  grpc_server_max_recv_msg_size: 67108864
+  grpc_server_max_send_msg_size: 67108864
 common:
   path_prefix: /loki
   replication_factor: 1
@@ -28,3 +30,7 @@ limits_config:
   per_stream_rate_limit_burst: 20GB
 query_range:
   cache_results: false
+ingester_client:
+  grpc_client_config:
+    max_recv_msg_size: 67108864
+    max_send_msg_size: 67108864
