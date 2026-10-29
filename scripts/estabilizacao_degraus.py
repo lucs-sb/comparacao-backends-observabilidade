@@ -4,7 +4,8 @@ Uso, a partir da raiz do repositório: python3 scripts/estabilizacao_degraus.py 
 
 Para cada degrau, mostra por minuto a taxa entregue ao backend e, nos pares com Collector, a
 fila média do exportador. O degrau é estável quando o segundo e o terceiro minuto entregam
-taxas a menos de 5% uma da outra e a fila não cresce depois do primeiro minuto.
+taxas a menos de 5% uma da outra e a fila não cresce mais de 10% da capacidade depois do
+primeiro minuto.
 """
 import csv
 import sys
@@ -52,7 +53,9 @@ for d in degraus:
         filas_crescem = False
         if com_collector:
             medias = [sum(float(l["fila"]) for l in ls) / len(ls) for _, _, ls in minutos]
-            filas_crescem = medias[-1] > medias[1] + 1
+            # crescimento acima de 10% da capacidade, para ignorar oscilações de um ou dois lotes
+            capacidade = float(linhas[-1]["capacidade_fila"]) or 1.0
+            filas_crescem = medias[-1] > medias[1] + 0.1 * capacidade
         estavel = "estável" if variacao <= TOLERANCIA and not filas_crescem else "instável"
     print(f"degrau {d['degrau']} alvo {d['alvo']} {d['estado']}: " + " | ".join(partes)
           + f" -> {estavel}")

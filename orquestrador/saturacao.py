@@ -34,6 +34,8 @@ PARES = {"loki": "logs", "elasticsearch": "logs", "jaeger": "traces", "zipkin": 
 ACOMODACAO = 10     # segundos ignorados no início e no fim de cada degrau
 AMOSTRAGEM = 5      # segundos entre leituras do Collector dentro do degrau
 TOLERANCIA = 0.95   # abaixo de 95% do esperado, a taxa é considerada não atingida
+REGIME = 60         # segundos finais do degrau em que as taxas são medidas (P2)
+LIMITE_GERADOR = 0.9  # fração da CPU da instância 3 a partir da qual o gerador é o limite (P5)
 CONTEINER = "tcc-gerador"
 METRICAS_COLLECTOR = f"http://{HOST_DEMO}:8888/metrics"
 
@@ -57,6 +59,36 @@ def ler_collector(sinal):
             if linha.startswith(nome):
                 valores[chave] += float(linha.rsplit(" ", 1)[1])
     return valores
+
+
+def _cpu_instancia():
+    """Tempo ocupado e total de todos os núcleos desta máquina, lidos em /proc/stat."""
+    try:
+        with open("/proc/stat") as f:
+            campos = [int(x) for x in f.readline().split()[1:]]
+    except OSError:
+        return None  # fora do Linux, como no MacBook
+    ocioso = campos[3] + campos[4]  # idle e iowait
+    return sum(campos) - ocioso, sum(campos)
+
+
+def _pct_instancia(inicio, fim):
+    """CPU ocupada da instância 3 entre duas leituras de _cpu_instancia, em porcentagem."""
+    if not inicio or not fim or fim[1] <= inicio[1]:
+        return None
+    return (fim[0] - inicio[0]) / (fim[1] - inicio[1]) * 100
+
+
+def _regime(amostras):
+    """Primeira e última leitura do trecho final do degrau.
+
+    No P2, degraus perto do limite entregaram bem no primeiro minuto e caíram no terceiro.
+    A média do degrau inteiro escondia essa queda, então as taxas usam só o fim.
+    """
+    final = [a for a in amostras if a[0] >= amostras[-1][0] - REGIME]
+    if len(final) < 2:
+        final = amostras
+    return final[0], final[-1]
 
 
 def _nomes():
@@ -89,14 +121,14 @@ def _iniciar_geradores(par, taxa, duracao, registro):
     return processos
 
 
-def avaliar(amostras, alvo):
+def avaliar(amostras, alvo, cpu_instancia=None):
     """Classifica um degrau pelas leituras do Collector feitas durante ele."""
-    (t0, a), (t1, b) = amostras[0], amostras[-1]
-    duracao = t1 - t0
-    aceita = (b["aceitos"] - a["aceitos"]) / duracao
-    enviada = (b["enviados"] - a["enviados"]) / duracao
+    (_, a), (_, b) = amostras[0], amostras[-1]
     falhas = (b["falhas_envio"] - a["falhas_envio"]) + (b["falhas_fila"] - a["falhas_fila"])
     recusados = b["recusados"] - a["recusados"]
+    (t0, ra), (t1, rb) = _regime(amostras)
+    aceita = (rb["aceitos"] - ra["aceitos"]) / (t1 - t0)
+    enviada = (rb["enviados"] - ra["enviados"]) / (t1 - t0)
 
     # Fila cheia: no último terço do degrau, a fila média ocupa 80% ou mais da capacidade.
     # O acúmulo em si já aparece em "enviada abaixo de aceita". Uma regra baseada só em
@@ -114,14 +146,22 @@ def avaliar(amostras, alvo):
     elif recusados > 0:
         estado = "recusado"            # o Collector recusou dados com o backend em dia
     elif aceita < TOLERANCIA * alvo:
-        estado = "gerador_limitado"    # a taxa pedida não foi atingida (P5)
+        # Abaixo do alvo sem fila cheia nem falhas. O exportador do Elasticsearch bloqueia
+        # quando a fila enche, em vez de descartar, e esse bloqueio volta até o gerador,
+        # que passa a enviar menos. Só conta como limite do gerador com a instância 3 cheia.
+        if cpu_instancia is None or cpu_instancia >= 100 * LIMITE_GERADOR:
+            estado = "gerador_limitado"    # a taxa pedida não foi atingida (P5)
+        else:
+            estado = "saturado"            # o backend segurou o Collector, que segurou o gerador
     else:
         estado = "ok"
     return {
         "alvo": round(alvo), "aceita": round(aceita), "enviada": round(enviada),
         "falhas": int(falhas), "recusados": int(recusados),
         "fila_inicio": round(filas[0]), "fila_fim": round(filas[-1]),
-        "capacidade_fila": round(capacidade), "estado": estado,
+        "capacidade_fila": round(capacidade),
+        "cpu_instancia3_pct": round(cpu_instancia) if cpu_instancia is not None else None,
+        "estado": estado,
     }
 
 
@@ -148,6 +188,7 @@ def rodar_degraus(par, taxas, duracao, pasta):
             registro = open(pasta / f"gerador_degrau{numero}.log", "w")
             processos = _iniciar_geradores(par, taxa, duracao, registro)
             time.sleep(ACOMODACAO)
+            instancia_inicio = _cpu_instancia()
             amostras = []
             fim = inicio + duracao - ACOMODACAO
             while time.time() < fim:
@@ -155,6 +196,7 @@ def rodar_degraus(par, taxas, duracao, pasta):
                 amostras.append(leitura)
                 _registrar_amostra(pasta, numero, *leitura)
                 time.sleep(AMOSTRAGEM)
+            cpu_instancia = _pct_instancia(instancia_inicio, _cpu_instancia())
             limite = inicio + duracao + 60
             try:
                 for processo in processos:
@@ -166,7 +208,7 @@ def rodar_degraus(par, taxas, duracao, pasta):
             finally:
                 registro.close()
             resultado = {"degrau": numero, "inicio": round(inicio, 3), "fim": round(time.time(), 3),
-                         **avaliar(amostras, taxa)}
+                         **avaliar(amostras, taxa, cpu_instancia)}
             degraus.append(resultado)
             if saida is None:
                 saida = csv.DictWriter(arquivo, fieldnames=list(resultado))
@@ -174,7 +216,8 @@ def rodar_degraus(par, taxas, duracao, pasta):
             saida.writerow(resultado)
             arquivo.flush()
             print(f"    aceita {resultado['aceita']}, enviada {resultado['enviada']}, "
-                  f"fila {resultado['fila_inicio']} para {resultado['fila_fim']}: "
+                  f"fila {resultado['fila_inicio']} para {resultado['fila_fim']}, "
+                  f"instância 3 {resultado['cpu_instancia3_pct']}%: "
                   f"{resultado['estado']}", flush=True)
             if resultado["estado"] != "ok":
                 break
@@ -204,7 +247,6 @@ SERIES = METRICAS * SERIES_POR_METRICA  # 100 mil séries, divididas entre os ge
 GERADORES_METRICAS = 8                  # muda com --geradores, sempre um divisor de 1000 (A25)
 METRICAS_POR_GERADOR = METRICAS // GERADORES_METRICAS
 PORTAS = {"prometheus": 9090, "victoriametrics": 8428}
-LIMITE_GERADOR = 0.9  # fração da CPU da instância 3 a partir da qual o gerador é o limite (P5)
 
 # Contadores do backend: aceitas são as amostras recebidas pela escrita remota e gravadas, as
 # que chegaram ao armazenamento. No Prometheus as duas coincidem, porque a amostra é gravada
@@ -272,17 +314,6 @@ def _cpu_geradores():
     return sum(v.get("cpu_s", 0.0) for nome, v in leitura.items() if nome.startswith(AVALANCHE))
 
 
-def _cpu_instancia():
-    """Tempo ocupado e total de todos os núcleos desta máquina, lidos em /proc/stat."""
-    try:
-        with open("/proc/stat") as f:
-            campos = [int(x) for x in f.readline().split()[1:]]
-    except OSError:
-        return None  # fora do Linux, como no MacBook
-    ocioso = campos[3] + campos[4]  # idle e iowait
-    return sum(campos) - ocioso, sum(campos)
-
-
 def _iniciar_avalanche(ferramenta, intervalo, registro):
     """Os avalanche em segundo plano, enviando sem fim até serem removidos.
 
@@ -317,10 +348,10 @@ def avaliar_metricas(amostras, alvo, cpu_gerador, cpu_instancia, encerrados):
     medida vale tanto pelos contêineres do avalanche quanto pela instância inteira, que inclui
     o tráfego de rede tratado pelo sistema.
     """
-    (t0, a), (t1, b) = amostras[0], amostras[-1]
-    duracao = t1 - t0
-    aceita = (b["aceitas"] - a["aceitas"]) / duracao
-    gravada = (b["gravadas"] - a["gravadas"]) / duracao
+    (_, a), (_, b) = amostras[0], amostras[-1]
+    (t0, ra), (t1, rb) = _regime(amostras)
+    aceita = (rb["aceitas"] - ra["aceitas"]) / (t1 - t0)
+    gravada = (rb["gravadas"] - ra["gravadas"]) / (t1 - t0)
     erros = int(b["erros"] - a["erros"]) + encerrados
     esperas = int(b["esperas"] - a["esperas"])
     limite = LIMITE_GERADOR * 100 * os.cpu_count()
@@ -388,10 +419,7 @@ def rodar_degraus_metricas(ferramenta, taxas, duracao, pasta):
             cpu = None
             if cpu_inicio[1] is not None and cpu_fim[1] is not None:
                 cpu = (cpu_fim[1] - cpu_inicio[1]) / (cpu_fim[0] - cpu_inicio[0]) * 100
-            cpu_instancia = None
-            if instancia_inicio and instancia_fim and instancia_fim[1] > instancia_inicio[1]:
-                cpu_instancia = ((instancia_fim[0] - instancia_inicio[0])
-                                 / (instancia_fim[1] - instancia_inicio[1]) * 100)
+            cpu_instancia = _pct_instancia(instancia_inicio, instancia_fim)
             resultado = {"degrau": numero, "inicio": round(inicio, 3), "fim": round(time.time(), 3),
                          "intervalo_ms": intervalo,
                          **avaliar_metricas(amostras, alvo, cpu, cpu_instancia, encerrados)}
