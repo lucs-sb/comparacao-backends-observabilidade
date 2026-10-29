@@ -1,0 +1,96 @@
+# Camada do agente da Demo 3.1.0 (agent e mcp), sem o chatbot.
+#
+# O gerador de carga da Demo tem uma tarefa, ask_agent, que manda perguntas ao serviço
+# agent. Sem ele, cerca de 9% das requisições do Locust falham por nome não resolvido.
+# O compose.agent.yaml original também traz o chatbot, que depende do servidor OpAMP da
+# pilha de observabilidade própria da Demo, que não é carregada. Por isso este arquivo
+# repete só o agent e o mcp, como estão no compose.agent.yaml da 3.1.0.
+#
+# Com USE_VCR=True, padrão no .env da Demo, o agent responde com conversas gravadas em
+# src/agent/fixtures, sem chamar um modelo de linguagem. As perguntas do Locust são as
+# mesmas das gravações. Os caminhos relativos partem da pasta da Demo, a do compose.yaml.
+services:
+  agent:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-agent
+    container_name: agent
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+    restart: unless-stopped
+    ports:
+      - "${AGENT_PORT}"
+    volumes:
+      - ./src/agent/fixtures:/app/fixtures
+    environment:
+      - TRACELOOP_BASE_URL
+      - GRAPH_RECURSION_LIMIT
+      - MCP_ENDPOINT
+      - MCP_PORT
+      - MCP_ENABLED
+      - AGENT_ENDPOINT
+      - AGENT_PORT
+      - LLM_BASE_URL
+      - LLM_MODEL
+      - LLM_TLS_VERIFY
+      - API_KEY
+      - USE_VCR
+      - VCR_MATCH_THRESHOLD
+      - OPENAI_API_KEY=${API_KEY}
+      - APPLICATION_ENDPOINT
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=low
+      - OTEL_SERVICE_NAME=agent
+      - FLAGD_HOST
+      - FLAGD_PORT
+      - OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED=true
+    depends_on:
+      otel-collector:
+        condition: service_started
+      product-catalog:
+        condition: service_started
+      mcp:
+        condition: service_started
+      flagd:
+        condition: service_started
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  mcp:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-mcp
+    container_name: mcp
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT}"
+    environment:
+      - TRACELOOP_BASE_URL
+      - MCP_ENDPOINT
+      - MCP_PORT
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - APPLICATION_ENDPOINT
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=low
+      - OTEL_SERVICE_NAME=mcp
+      - OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED=true
+    depends_on:
+      frontend:
+        condition: service_started
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  load-generator:
+    environment:
+      - AGENT_ENDPOINT
+      - AGENT_PORT
+    depends_on:
+      agent:
+        condition: service_started

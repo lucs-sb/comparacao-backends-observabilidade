@@ -68,7 +68,9 @@ def _compose_demo(*args):
         "IP_BACKEND": HOST_BACKEND,
     }
     prefixo = " ".join(f"{k}={shlex.quote(v)}" for k, v in variaveis.items())
-    arquivos = "-f compose.yaml -f compose.full.yaml -f ../compose.override.yml"
+    # o agente entra porque o Locust da Demo 3.1.0 faz perguntas a ele (compose.agente.yml)
+    arquivos = ("-f compose.yaml -f compose.full.yaml -f ../compose.agente.yml "
+                "-f ../compose.override.yml")
     if NA_AWS:
         arquivos += " -f ../compose.aws.yml"
     return _na_instancia2(
