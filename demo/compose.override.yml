@@ -1,4 +1,4 @@
-# Ajustes no Collector da Demo, carregados depois de compose.yaml e compose.full.yaml.
+# Ajustes no Collector e no gerador de carga da Demo, carregados depois dos arquivos da Demo.
 services:
   otel-collector:
     deploy:
@@ -10,6 +10,12 @@ services:
     networks:
       - default
       - tcc                             # alcança os backends pelo nome
+
+  load-generator:
+    deploy:
+      resources:
+        limits:
+          memory: 4G                    # 1500M na Demo; com 50 usuários já chegava a 1,4 GiB
 
 networks:
   tcc:

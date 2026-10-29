@@ -101,7 +101,7 @@ def subir_demo(ferramenta, espera=600):
         try:
             if (requests.get(f"{LOCUST}/stats/requests", timeout=5).ok
                     and requests.get(collector.METRICAS, timeout=5).ok):
-                time.sleep(30)  # alguns serviços terminam de iniciar depois do Locust
+                time.sleep(90)  # alguns serviços terminam de iniciar depois do Locust
                 return
         except requests.RequestException:
             pass
@@ -137,11 +137,12 @@ def _nucleos_instancia2():
 
 
 def _cpu_memoria_instancia2():
-    """CPU acumulada e memória somadas de todos os contêineres da instância 2."""
+    """CPU acumulada e memória somadas dos contêineres da instância 2, e as do Locust."""
     leitura = ler(HOST_DEMO)
     cpu = sum(v.get("cpu_s", 0.0) for v in leitura.values())
     memoria = sum(v.get("memoria_bytes", 0.0) for v in leitura.values())
-    return time.time(), cpu, memoria
+    locust = leitura.get("load-generator", {})
+    return time.time(), cpu, memoria, locust.get("cpu_s", 0.0), locust.get("memoria_bytes", 0.0)
 
 
 def _volumes():
@@ -169,10 +170,10 @@ def piloto_usuarios(ferramenta, niveis, passo):
             print(f"  {n} usuários por {passo} s", flush=True)
             iniciar_usuarios(n)
             time.sleep(min(60, passo // 3))   # acomodação, fora da medida
-            t0, cpu0, _ = _cpu_memoria_instancia2()
+            t0, cpu0, _, lcpu0, _ = _cpu_memoria_instancia2()
             v0 = _volumes()
             time.sleep(passo - min(60, passo // 3))
-            t1, cpu1, memoria = _cpu_memoria_instancia2()
+            t1, cpu1, memoria, lcpu1, lmemoria = _cpu_memoria_instancia2()
             v1 = _volumes()
             locust = estatisticas_locust()
             parar_usuarios()
@@ -181,6 +182,9 @@ def piloto_usuarios(ferramenta, niveis, passo):
                 "usuarios": n,
                 "cpu_instancia2_pct": round(cpu_pct, 1),
                 "memoria_instancia2_gib": round(memoria / 2**30, 1),
+                # o gerador de carga roda na mesma instância e não pode ser o limite (P5)
+                "cpu_locust_pct": round((lcpu1 - lcpu0) / (t1 - t0) * 100),
+                "memoria_locust_gib": round(lmemoria / 2**30, 2),
                 **{f"{s}_por_s": round((v1[s] - v0[s]) / (t1 - t0)) for s in v0},
                 **{f"locust_{k}": v for k, v in locust.items()},
                 "dentro_do_limite": cpu_pct < LIMITE_CPU_DEMO and not locust["falhas"],
@@ -188,6 +192,7 @@ def piloto_usuarios(ferramenta, niveis, passo):
             linhas.append(linha)
             print(f"    CPU da instância 2 {linha['cpu_instancia2_pct']}%, "
                   f"memória {linha['memoria_instancia2_gib']} GiB, "
+                  f"Locust {linha['cpu_locust_pct']}% e {linha['memoria_locust_gib']} GiB, "
                   f"{linha['locust_requisicoes_por_s']} req/s, falhas {locust['falhas']}, "
                   f"logs {linha['log_records_por_s']}/s, spans {linha['spans_por_s']}/s, "
                   f"pontos de métricas {linha['metric_points_por_s']}/s", flush=True)
