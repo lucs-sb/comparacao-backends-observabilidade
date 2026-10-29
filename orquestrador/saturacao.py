@@ -186,7 +186,7 @@ AVALANCHE = "tcc-avalanche"
 METRICAS = 1000
 SERIES_POR_METRICA = 100
 SERIES = METRICAS * SERIES_POR_METRICA  # 100 mil séries, divididas entre os geradores
-GERADORES_METRICAS = 4                  # muda com --geradores, sempre um divisor de 1000
+GERADORES_METRICAS = 8                  # muda com --geradores, sempre um divisor de 1000 (A25)
 METRICAS_POR_GERADOR = METRICAS // GERADORES_METRICAS
 PORTAS = {"prometheus": 9090, "victoriametrics": 8428}
 LIMITE_GERADOR = 0.9  # fração da CPU da instância 3 a partir da qual o gerador é o limite (P5)
@@ -427,11 +427,11 @@ def main():
     parser.add_argument("--estimativa", type=float)
     parser.add_argument("--repeticao", type=int, default=1)
     parser.add_argument("--degrau", type=int)
-    parser.add_argument("--geradores", type=int, default=4,
+    parser.add_argument("--geradores", type=int, default=8,
                         help="contêineres do avalanche no par de métricas")
     args = parser.parse_args()
     configurar_geradores(args.geradores)
-    sufixo = f"-g{args.geradores}" if args.geradores != 4 else ""
+    sufixo = f"-g{args.geradores}" if args.geradores != 8 else ""
 
     if args.modo == "rampa":
         taxas = [args.inicio * 2 ** k for k in range(12)]  # até 2048 vezes o início
