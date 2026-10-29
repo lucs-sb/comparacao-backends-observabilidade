@@ -62,7 +62,9 @@ def _nomes():
 
 
 def _remover_geradores():
-    subprocess.run(["docker", "rm", "-f", *_nomes(), *_nomes_avalanche()], capture_output=True)
+    # os nomes do avalanche vão até 20, para pegar sobras de uma execução com mais geradores
+    avalanche = [f"{AVALANCHE}-{i}" for i in range(1, 21)]
+    subprocess.run(["docker", "rm", "-f", *_nomes(), *avalanche], capture_output=True)
 
 
 def _iniciar_geradores(par, taxa, duracao, registro):
@@ -181,10 +183,11 @@ def _concluir(degraus, pasta):
 # encurtando o intervalo de envio. Cada contêiner do avalanche leva um rótulo gerador próprio,
 # então as séries dos quatro não se sobrepõem.
 AVALANCHE = "tcc-avalanche"
-GERADORES_METRICAS = 4
-METRICAS_POR_GERADOR = 250
+METRICAS = 1000
 SERIES_POR_METRICA = 100
-SERIES = GERADORES_METRICAS * METRICAS_POR_GERADOR * SERIES_POR_METRICA  # 100 mil séries
+SERIES = METRICAS * SERIES_POR_METRICA  # 100 mil séries, divididas entre os geradores
+GERADORES_METRICAS = 4                  # muda com --geradores, sempre um divisor de 1000
+METRICAS_POR_GERADOR = METRICAS // GERADORES_METRICAS
 PORTAS = {"prometheus": 9090, "victoriametrics": 8428}
 LIMITE_GERADOR = 0.9  # fração da CPU da instância 3 a partir da qual o gerador é o limite (P5)
 
@@ -195,8 +198,19 @@ CONTADORES = {
     "prometheus": {"aceitas": ("prometheus_tsdb_head_samples_appended_total",),
                    "gravadas": ("prometheus_tsdb_head_samples_appended_total",)},
     "victoriametrics": {"aceitas": ('vm_rows_inserted_total{type="promremotewrite"',),
-                        "gravadas": ("vm_rows_added_to_storage_total",)},
+                        "gravadas": ("vm_rows_added_to_storage_total",),
+                        # requisições que esperaram vaga no limite de inserções simultâneas,
+                        # que por padrão é o dobro do número de núcleos
+                        "esperas": ("vm_concurrent_insert_limit_reached_total",)},
 }
+
+
+def configurar_geradores(n):
+    global GERADORES_METRICAS, METRICAS_POR_GERADOR
+    if METRICAS % n:
+        sys.exit(f"--geradores precisa dividir {METRICAS}")
+    GERADORES_METRICAS = n
+    METRICAS_POR_GERADOR = METRICAS // n
 
 
 def _nomes_avalanche():
@@ -218,7 +232,7 @@ def _erro_de_escrita(ferramenta, linha):
 def ler_backend(ferramenta):
     """Amostras aceitas e gravadas e erros de escrita, lidos no /metrics do backend."""
     url = FERRAMENTAS[ferramenta][0]().url + "/metrics"
-    valores = {"aceitas": 0.0, "gravadas": 0.0, "erros": 0.0}
+    valores = {"aceitas": 0.0, "gravadas": 0.0, "erros": 0.0, "esperas": 0.0}
     for linha in requests.get(url, timeout=5).text.splitlines():
         if not linha or linha.startswith("#"):
             continue
@@ -243,8 +257,19 @@ def _cpu_geradores():
     return sum(v.get("cpu_s", 0.0) for nome, v in leitura.items() if nome.startswith(AVALANCHE))
 
 
+def _cpu_instancia():
+    """Tempo ocupado e total de todos os núcleos desta máquina, lidos em /proc/stat."""
+    try:
+        with open("/proc/stat") as f:
+            campos = [int(x) for x in f.readline().split()[1:]]
+    except OSError:
+        return None  # fora do Linux, como no MacBook
+    ocioso = campos[3] + campos[4]  # idle e iowait
+    return sum(campos) - ocioso, sum(campos)
+
+
 def _iniciar_avalanche(ferramenta, intervalo, registro):
-    """Quatro avalanche em segundo plano, enviando sem fim até serem removidos.
+    """Os avalanche em segundo plano, enviando sem fim até serem removidos.
 
     A ordem fora do tempo vem ligada por padrão e mandaria amostras com até 5 minutos de
     atraso, que o Prometheus recusa. Os valores mudam a cada segundo, como numa coleta real.
@@ -268,24 +293,29 @@ def _iniciar_avalanche(ferramenta, intervalo, registro):
     return processos
 
 
-def avaliar_metricas(amostras, alvo, cpu_gerador, encerrados):
+def avaliar_metricas(amostras, alvo, cpu_gerador, cpu_instancia, encerrados):
     """Classifica um degrau pelas leituras do backend feitas durante ele.
 
     O avalanche espera cada envio terminar antes do próximo, então um backend lento reduz a
     taxa em vez de acumular fila. Quando a taxa fica abaixo do alvo, a CPU do gerador separa
-    os dois casos: perto do limite da instância 3, quem não acompanhou foi o gerador.
+    os dois casos: perto do limite da instância 3, quem não acompanhou foi o gerador. A
+    medida vale tanto pelos contêineres do avalanche quanto pela instância inteira, que inclui
+    o tráfego de rede tratado pelo sistema.
     """
     (t0, a), (t1, b) = amostras[0], amostras[-1]
     duracao = t1 - t0
     aceita = (b["aceitas"] - a["aceitas"]) / duracao
     gravada = (b["gravadas"] - a["gravadas"]) / duracao
     erros = int(b["erros"] - a["erros"]) + encerrados
+    esperas = int(b["esperas"] - a["esperas"])
     limite = LIMITE_GERADOR * 100 * os.cpu_count()
+    gerador_no_limite = ((cpu_gerador is not None and cpu_gerador >= limite)
+                         or (cpu_instancia is not None and cpu_instancia >= 100 * LIMITE_GERADOR))
 
     if erros > 0 or gravada < TOLERANCIA * aceita:
         estado = "saturado"            # o backend recusou envios ou não gravou o que recebeu
     elif aceita < TOLERANCIA * alvo:
-        if cpu_gerador is not None and cpu_gerador >= limite:
+        if gerador_no_limite:
             estado = "gerador_limitado"    # a instância 3 não produziu a taxa pedida (P5)
         else:
             estado = "saturado"            # o backend respondeu devagar e segurou o gerador
@@ -294,7 +324,9 @@ def avaliar_metricas(amostras, alvo, cpu_gerador, encerrados):
     return {
         "alvo": round(alvo), "aceita": round(aceita), "gravada": round(gravada),
         "erros": erros,
+        "esperas_insercao": esperas,
         "cpu_gerador_pct": round(cpu_gerador) if cpu_gerador is not None else None,
+        "cpu_instancia3_pct": round(cpu_instancia) if cpu_instancia is not None else None,
         "estado": estado,
     }
 
@@ -318,12 +350,14 @@ def rodar_degraus_metricas(ferramenta, taxas, duracao, pasta):
                 processos = _iniciar_avalanche(ferramenta, intervalo, registro)
                 time.sleep(ACOMODACAO)
                 cpu_inicio = (time.time(), _cpu_geradores())
+                instancia_inicio = _cpu_instancia()
                 amostras = []
                 fim = inicio + duracao - ACOMODACAO
                 while time.time() < fim:
                     amostras.append((time.time(), ler_backend(ferramenta)))
                     time.sleep(AMOSTRAGEM)
                 cpu_fim = (time.time(), _cpu_geradores())
+                instancia_fim = _cpu_instancia()
                 # um avalanche que terminou sozinho desistiu depois de mais de 20 erros de envio
                 encerrados = sum(1 for p in processos if p.poll() is not None)
             finally:
@@ -337,9 +371,13 @@ def rodar_degraus_metricas(ferramenta, taxas, duracao, pasta):
             cpu = None
             if cpu_inicio[1] is not None and cpu_fim[1] is not None:
                 cpu = (cpu_fim[1] - cpu_inicio[1]) / (cpu_fim[0] - cpu_inicio[0]) * 100
+            cpu_instancia = None
+            if instancia_inicio and instancia_fim and instancia_fim[1] > instancia_inicio[1]:
+                cpu_instancia = ((instancia_fim[0] - instancia_inicio[0])
+                                 / (instancia_fim[1] - instancia_inicio[1]) * 100)
             resultado = {"degrau": numero, "inicio": round(inicio, 3), "fim": round(time.time(), 3),
                          "intervalo_ms": intervalo,
-                         **avaliar_metricas(amostras, alvo, cpu, encerrados)}
+                         **avaliar_metricas(amostras, alvo, cpu, cpu_instancia, encerrados)}
             degraus.append(resultado)
             if saida is None:
                 saida = csv.DictWriter(arquivo, fieldnames=list(resultado))
@@ -347,7 +385,9 @@ def rodar_degraus_metricas(ferramenta, taxas, duracao, pasta):
             saida.writerow(resultado)
             arquivo.flush()
             print(f"    aceita {resultado['aceita']}, gravada {resultado['gravada']}, "
-                  f"erros {resultado['erros']}, CPU do gerador {resultado['cpu_gerador_pct']}%: "
+                  f"erros {resultado['erros']}, esperas {resultado['esperas_insercao']}, "
+                  f"CPU do gerador {resultado['cpu_gerador_pct']}%, "
+                  f"instância 3 {resultado['cpu_instancia3_pct']}%: "
                   f"{resultado['estado']}", flush=True)
             if resultado["estado"] != "ok":
                 break
@@ -387,17 +427,21 @@ def main():
     parser.add_argument("--estimativa", type=float)
     parser.add_argument("--repeticao", type=int, default=1)
     parser.add_argument("--degrau", type=int)
+    parser.add_argument("--geradores", type=int, default=4,
+                        help="contêineres do avalanche no par de métricas")
     args = parser.parse_args()
+    configurar_geradores(args.geradores)
+    sufixo = f"-g{args.geradores}" if args.geradores != 4 else ""
 
     if args.modo == "rampa":
         taxas = [args.inicio * 2 ** k for k in range(12)]  # até 2048 vezes o início
-        executar_saturacao(args.ferramenta, "rampa", f"inicio{round(args.inicio)}",
+        executar_saturacao(args.ferramenta, "rampa", f"inicio{round(args.inicio)}{sufixo}",
                            args.repeticao, taxas, args.degrau or 60)
     else:
         if not args.estimativa:
             sys.exit("informe --estimativa, a vazão estimada na rampa")
         taxas = [args.estimativa * f / 10 for f in range(5, 16)]  # 50% a 150%
-        executar_saturacao(args.ferramenta, "saturacao", "degraus", args.repeticao,
+        executar_saturacao(args.ferramenta, "saturacao", f"degraus{sufixo}", args.repeticao,
                            taxas, args.degrau or 180)
 
 
