@@ -4,7 +4,9 @@ Uso, a partir da pasta orquestrador:
     python saturacao.py rampa <ferramenta> [--inicio 1000] [--degrau 60]
         Piloto (P1): dobra a taxa a cada degrau, a partir de --inicio itens por segundo.
     python saturacao.py degraus <ferramenta> --estimativa N [--repeticao 1] [--degrau 180]
+                                             [--experimento saturacao]
         Experimento: de 50% a 150% da estimativa, com incremento de 10% (seção 4.7).
+        No piloto, --experimento piloto separa os resultados dos do experimento.
 
 Ferramentas: loki, elasticsearch, jaeger, zipkin, prometheus, victoriametrics.
 Em logs e traces, a carga passa pelo Collector e a saturação é lida nos contadores dele.
@@ -123,6 +125,17 @@ def avaliar(amostras, alvo):
     }
 
 
+def _registrar_amostra(pasta, degrau, instante, valores):
+    """Guarda cada leitura em amostras.csv, para ver a evolução dentro do degrau (P2)."""
+    arquivo = pasta / "amostras.csv"
+    novo = not arquivo.exists()
+    with open(arquivo, "a", newline="") as f:
+        saida = csv.writer(f)
+        if novo:
+            saida.writerow(["degrau", "instante", *valores])
+        saida.writerow([degrau, round(instante, 3), *valores.values()])
+
+
 def rodar_degraus(par, taxas, duracao, pasta):
     """Aplica as taxas em sequência e para no primeiro degrau que não for ok."""
     sinal = SINAIS[par]
@@ -138,7 +151,9 @@ def rodar_degraus(par, taxas, duracao, pasta):
             amostras = []
             fim = inicio + duracao - ACOMODACAO
             while time.time() < fim:
-                amostras.append((time.time(), ler_collector(sinal)))
+                leitura = (time.time(), ler_collector(sinal))
+                amostras.append(leitura)
+                _registrar_amostra(pasta, numero, *leitura)
                 time.sleep(AMOSTRAGEM)
             limite = inicio + duracao + 60
             try:
@@ -354,7 +369,9 @@ def rodar_degraus_metricas(ferramenta, taxas, duracao, pasta):
                 amostras = []
                 fim = inicio + duracao - ACOMODACAO
                 while time.time() < fim:
-                    amostras.append((time.time(), ler_backend(ferramenta)))
+                    leitura = (time.time(), ler_backend(ferramenta))
+                    amostras.append(leitura)
+                    _registrar_amostra(pasta, numero, *leitura)
                     time.sleep(AMOSTRAGEM)
                 cpu_fim = (time.time(), _cpu_geradores())
                 instancia_fim = _cpu_instancia()
@@ -427,6 +444,8 @@ def main():
     parser.add_argument("--estimativa", type=float)
     parser.add_argument("--repeticao", type=int, default=1)
     parser.add_argument("--degrau", type=int)
+    parser.add_argument("--experimento", default="saturacao",
+                        help="pasta de resultados do modo degraus, por exemplo piloto")
     parser.add_argument("--geradores", type=int, default=8,
                         help="contêineres do avalanche no par de métricas")
     args = parser.parse_args()
@@ -441,7 +460,7 @@ def main():
         if not args.estimativa:
             sys.exit("informe --estimativa, a vazão estimada na rampa")
         taxas = [args.estimativa * f / 10 for f in range(5, 16)]  # 50% a 150%
-        executar_saturacao(args.ferramenta, "saturacao", f"degraus{sufixo}", args.repeticao,
+        executar_saturacao(args.ferramenta, args.experimento, f"degraus{sufixo}", args.repeticao,
                            taxas, args.degrau or 180)
 
 
