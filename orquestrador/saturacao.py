@@ -314,12 +314,14 @@ def _cpu_geradores():
     return sum(v.get("cpu_s", 0.0) for nome, v in leitura.items() if nome.startswith(AVALANCHE))
 
 
-def _iniciar_avalanche(ferramenta, intervalo, registro):
+def _iniciar_avalanche(ferramenta, intervalo, registro, series_por_metrica=None, valores_s=1):
     """Os avalanche em segundo plano, enviando sem fim até serem removidos.
 
     A ordem fora do tempo vem ligada por padrão e mandaria amostras com até 5 minutos de
-    atraso, que o Prometheus recusa. Os valores mudam a cada segundo, como numa coleta real.
+    atraso, que o Prometheus recusa. Os valores mudam a cada valores_s segundos, por padrão a
+    cada segundo, como numa coleta real. A cardinalidade troca as séries por métrica.
     """
+    series_por_metrica = series_por_metrica or SERIES_POR_METRICA
     _remover_geradores()
     processos = []
     for i, nome in enumerate(_nomes_avalanche(), start=1):
@@ -327,8 +329,8 @@ def _iniciar_avalanche(ferramenta, intervalo, registro):
             ["docker", "run", "--rm", "--name", nome, "--network", "tcc", *hosts_extras(),
              geradores.AVALANCHE,
              f"--gauge-metric-count={METRICAS_POR_GERADOR}",
-             f"--series-count={SERIES_POR_METRICA}",
-             "--series-interval=0", "--metric-interval=0", "--value-interval=1",
+             f"--series-count={series_por_metrica}",
+             "--series-interval=0", "--metric-interval=0", f"--value-interval={valores_s}",
              f"--const-label=gerador={i}",
              f"--remote-url=http://{ferramenta}:{PORTAS[ferramenta]}/api/v1/write",
              f"--remote-write-interval={intervalo}ms",

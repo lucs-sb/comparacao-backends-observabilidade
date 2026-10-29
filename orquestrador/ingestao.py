@@ -39,11 +39,13 @@ def _taxa(amostras, chave, desde):
     return (b[chave] - a[chave]) / (t1 - t0)
 
 
-def _resumir_carga(amostras, alvo, inicio, metricas, cpu_instancia, encerrados=0):
-    """Taxas depois do aquecimento e no último minuto, e se a carga se sustentou."""
+def _resumir_carga(amostras, alvo, inicio, metricas, cpu_instancia, encerrados=0,
+                   final_s=FINAL, tolerancia=None):
+    """Taxas depois do aquecimento e no trecho final, e se a carga se sustentou."""
+    tolerancia = tolerancia or s.TOLERANCIA
     aceita, entregue = ("aceitas", "gravadas") if metricas else ("aceitos", "enviados")
     desde = inicio + AQUECIMENTO
-    final = amostras[-1][0] - FINAL
+    final = amostras[-1][0] - final_s
     (_, a), (_, b) = amostras[0], amostras[-1]
     resumo = {
         "alvo": round(alvo),
@@ -67,8 +69,8 @@ def _resumir_carga(amostras, alvo, inicio, metricas, cpu_instancia, encerrados=0
     # Sustentada: o backend recebeu pelo menos 95% do alvo depois do aquecimento e também
     # no último minuto, sem falhas. Se não, o nível escolhido passou do que ele aguenta.
     resumo["sustentada"] = (not falhou
-                            and resumo["entregue"] >= s.TOLERANCIA * alvo
-                            and resumo["entregue_ultimo_minuto"] >= s.TOLERANCIA * alvo)
+                            and resumo["entregue"] >= tolerancia * alvo
+                            and resumo["entregue_ultimo_minuto"] >= tolerancia * alvo)
     return resumo
 
 

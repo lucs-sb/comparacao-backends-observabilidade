@@ -11,12 +11,12 @@ class Prometheus(Backend):
     prefixo = "avalanche"
 
     def consultar(self, promql):
-        r = requests.get(f"{self.url}/api/v1/query", params={"query": promql}, timeout=30)
+        r = requests.get(f"{self.url}/api/v1/query", params={"query": promql}, timeout=300)
         r.raise_for_status()
         return r.json()["data"]["result"]
 
     def contar(self):
-        resultado = self.consultar(f'count(last_over_time({{__name__=~"{self.prefixo}.*"}}[1h]))')
+        resultado = self.consultar(f'count({{__name__=~"{self.prefixo}.*"}})')
         return int(resultado[0]["value"][1]) if resultado else 0
 
     def nomes(self):
