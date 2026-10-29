@@ -41,23 +41,31 @@ def subir(par, espera=60):
     raise TimeoutError(f"Collector não respondeu em {espera} s")
 
 
-def _somar(prefixo):
+def _somar(prefixo, exportador=None):
     try:
         texto = requests.get(METRICAS, timeout=5).text
     except requests.RequestException:
         return None
     total = 0.0
     for linha in texto.splitlines():
-        if linha.startswith(prefixo):
-            total += float(linha.rsplit(" ", 1)[1])
+        if not linha.startswith(prefixo):
+            continue
+        if exportador and f'exporter="{exportador}"' not in linha:
+            continue
+        total += float(linha.rsplit(" ", 1)[1])
     return int(total)
 
 
-def enviados(sinal):
-    """sinal: log_records, spans ou metric_points."""
-    return _somar(f"otelcol_exporter_sent_{sinal}")
+def enviados(sinal, exportador=None):
+    """sinal: log_records, spans ou metric_points. exportador limita a um exportador."""
+    return _somar(f"otelcol_exporter_sent_{sinal}", exportador)
 
 
-def falhas(sinal):
+def falhas(sinal, exportador=None):
     # o contador só passa a existir na primeira falha, então ausência significa zero
-    return _somar(f"otelcol_exporter_send_failed_{sinal}")
+    return _somar(f"otelcol_exporter_send_failed_{sinal}", exportador)
+
+
+def recebidos(sinal):
+    """Itens aceitos pelos receptores, antes de qualquer exportador."""
+    return _somar(f"otelcol_receiver_accepted_{sinal}")
