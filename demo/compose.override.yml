@@ -1,21 +1,162 @@
-# Ajustes no Collector e no gerador de carga da Demo, carregados depois dos arquivos da Demo.
+# Ajustes da Demo carregados depois dos arquivos dela: Collector, gerador de carga e memória.
+#
+# Os limites de memória da Demo 3.1.0 foram pensados para rodar tudo num computador pessoal.
+# Com 50 usuários por 12 minutos, o ad, o astronomy-db (PostgreSQL) e o frontend eram
+# encerrados por falta de memória, e o product-catalog passava o tempo coletando lixo. A
+# aplicação respondia com erro em mais da metade das requisições (A30). Aqui todos os limites
+# são dobrados, assim como o GOMEMLIMIT dos serviços em Go, que precisa acompanhar o limite.
 services:
   otel-collector:
     deploy:
       resources:
         limits:
-          memory: ${COLLECTOR_MEM:-1G}   # 1G no MacBook, 8G na AWS
+          memory: ${COLLECTOR_MEM:-1G}          # 1G no MacBook, 8G na AWS
+    environment:
+      # A Demo fixa 160MiB, e acima disso o Go coleta lixo sem parar. Fica em 80% do limite.
+      - GOMEMLIMIT=${COLLECTOR_GOMEMLIMIT:-800MiB}
     ports:
-      - "8888:8888"                     # métricas internas, lidas pelo orquestrador
+      - "8888:8888"                           # métricas internas, lidas pelo orquestrador
     networks:
       - default
-      - tcc                             # alcança os backends pelo nome
+      - tcc                                   # alcança os backends pelo nome
 
   load-generator:
     deploy:
       resources:
         limits:
-          memory: 4G                    # 1500M na Demo; com 50 usuários já chegava a 1,4 GiB
+          memory: 4G                          # 1500M na Demo; com 50 usuários chegava a 1,4 GiB
+
+  accounting:
+    deploy:
+      resources:
+        limits:
+          memory: 320M                        # 160M na Demo
+
+  ad:
+    deploy:
+      resources:
+        limits:
+          memory: 600M                        # 300M na Demo
+
+  cart:
+    deploy:
+      resources:
+        limits:
+          memory: 320M                        # 160M na Demo
+
+  checkout:
+    deploy:
+      resources:
+        limits:
+          memory: 40M                        # 20M na Demo
+    environment:
+      - GOMEMLIMIT=32MiB                 # 16MiB na Demo
+
+  currency:
+    deploy:
+      resources:
+        limits:
+          memory: 40M                        # 20M na Demo
+
+  email:
+    deploy:
+      resources:
+        limits:
+          memory: 200M                        # 100M na Demo
+
+  flagd:
+    deploy:
+      resources:
+        limits:
+          memory: 150M                        # 75M na Demo
+    environment:
+      - GOMEMLIMIT=120MiB                 # 60MiB na Demo
+
+  flagd-ui:
+    deploy:
+      resources:
+        limits:
+          memory: 400M                        # 200M na Demo
+
+  fraud-detection:
+    deploy:
+      resources:
+        limits:
+          memory: 600M                        # 300M na Demo
+
+  frontend:
+    deploy:
+      resources:
+        limits:
+          memory: 500M                        # 250M na Demo
+
+  frontend-proxy:
+    deploy:
+      resources:
+        limits:
+          memory: 180M                        # 90M na Demo
+
+  image-provider:
+    deploy:
+      resources:
+        limits:
+          memory: 240M                        # 120M na Demo
+
+  kafka:
+    deploy:
+      resources:
+        limits:
+          memory: 1240M                        # 620M na Demo
+
+  payment:
+    deploy:
+      resources:
+        limits:
+          memory: 280M                        # 140M na Demo
+
+  product-catalog:
+    deploy:
+      resources:
+        limits:
+          memory: 40M                        # 20M na Demo
+    environment:
+      - GOMEMLIMIT=32MiB                 # 16MiB na Demo
+
+  quote:
+    deploy:
+      resources:
+        limits:
+          memory: 80M                        # 40M na Demo
+
+  recommendation:
+    deploy:
+      resources:
+        limits:
+          memory: 1000M                        # 500M na Demo
+
+  shipping:
+    deploy:
+      resources:
+        limits:
+          memory: 40M                        # 20M na Demo
+
+  telemetry-docs:
+    deploy:
+      resources:
+        limits:
+          memory: 200M                        # 100M na Demo
+
+  astronomy-db:
+    deploy:
+      resources:
+        limits:
+          memory: 160M                        # 80M na Demo
+
+  valkey-cart:
+    deploy:
+      resources:
+        limits:
+          memory: 40M                        # 20M na Demo
 
 networks:
   tcc:

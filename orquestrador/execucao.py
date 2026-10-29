@@ -71,11 +71,13 @@ def esvaziar_cache():
         )
 
 
-def executar(execucao, carga, antes=None, depois=None, exportador=None):
+def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=None):
     """Executa o roteiro completo. carga é uma função sem argumentos que aplica a carga.
 
-    antes roda depois do backend pronto e antes da medição, como a subida da Demo. depois
-    roda depois da leitura dos contadores do Collector, como a parada da Demo. exportador
+    antes roda depois do backend pronto e antes da medição, como a subida da Demo. fechar
+    roda logo depois da medição, antes da leitura dos contadores, como a parada dos serviços
+    que geram telemetria. depois roda depois da leitura dos contadores do Collector, como a
+    parada da Demo. exportador
     limita a contagem de enviados a um exportador, quando o Collector tem mais de um.
     """
     classe, par_collector = FERRAMENTAS[execucao.ferramenta]
@@ -121,6 +123,8 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None):
         carga()
         resumo["fim_carga"] = time.time()
         time.sleep(ESPERA_LOTE)  # o Collector esvazia a fila ainda dentro da medição
+    if fechar:
+        fechar()
 
     # 4. Registro do que foi enviado, antes de parar o Collector
     if le_collector:

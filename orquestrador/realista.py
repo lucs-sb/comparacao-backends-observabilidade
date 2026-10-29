@@ -60,10 +60,19 @@ def _na_instancia2(comando, verificar=True):
     return resultado.stdout
 
 
-def _compose_demo(*args):
-    """docker compose da Demo, com o .env dela antes do versoes.env (A9)."""
+def _gomemlimit(memoria):
+    """80% de um limite como 8g ou 1G, no formato do GOMEMLIMIT."""
+    numero, unidade = float(memoria[:-1]), memoria[-1].lower()
+    mib = numero * {"g": 1024, "m": 1}.get(unidade, 1)
+    return f"{int(mib * 0.8)}MiB"
+
+
+def _comando_compose():
+    """Variáveis e arquivos do docker compose da Demo, com o .env dela antes do versoes.env (A9)."""
+    memoria = AMBIENTE.get("COLLECTOR_MEM", "1G")
     variaveis = {
-        "COLLECTOR_MEM": AMBIENTE.get("COLLECTOR_MEM", "1G"),
+        "COLLECTOR_MEM": memoria,
+        "COLLECTOR_GOMEMLIMIT": _gomemlimit(memoria),
         "LOCUST_AUTOSTART": "false",   # o Locust só começa quando o orquestrador mandar
         "IP_BACKEND": HOST_BACKEND,
     }
@@ -73,9 +82,23 @@ def _compose_demo(*args):
                 "-f ../compose.override.yml")
     if NA_AWS:
         arquivos += " -f ../compose.aws.yml"
-    return _na_instancia2(
-        f"cd demo/opentelemetry-demo && {prefixo} docker compose --env-file .env "
-        f"--env-file ../../versoes.env {arquivos} {' '.join(args)}")
+    return f"{prefixo} docker compose --env-file .env --env-file ../../versoes.env {arquivos}"
+
+
+def _compose_demo(*args):
+    return _na_instancia2(f"cd demo/opentelemetry-demo && {_comando_compose()} {' '.join(args)}")
+
+
+def parar_fontes():
+    """Para todos os serviços da Demo menos o Collector, que esvazia a fila em seguida.
+
+    Sem isso, a Demo continua mandando telemetria entre a leitura dos contadores e a parada,
+    e o backend guarda mais itens do que o Collector contou como enviados.
+    """
+    dc = _comando_compose()
+    _na_instancia2(f"cd demo/opentelemetry-demo && {dc} stop "
+                   f"$({dc} config --services | grep -vx otel-collector)")
+    time.sleep(15)
 
 
 def preparar_demo(ferramenta):
@@ -244,7 +267,8 @@ def executar_realista(ferramenta, usuarios, repeticao, duracao, experimento):
         parar_demo()
 
     try:
-        resumo = executar(execucao, carga, antes=antes, depois=depois, exportador=exportador)
+        resumo = executar(execucao, carga, antes=antes, depois=depois, exportador=exportador,
+                          fechar=parar_fontes)
     finally:
         try:
             parar_usuarios()

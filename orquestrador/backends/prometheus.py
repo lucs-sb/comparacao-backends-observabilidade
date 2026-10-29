@@ -16,7 +16,9 @@ class Prometheus(Backend):
         return r.json()["data"]["result"]
 
     def contar(self):
-        resultado = self.consultar(f'count({{__name__=~"{self.prefixo}.*"}})')
+        # todas as séries: nos sintéticos só existem as do avalanche, e no cenário realista
+        # as métricas da Demo têm outros nomes
+        resultado = self.consultar('count({__name__=~".+"})')
         return int(resultado[0]["value"][1]) if resultado else 0
 
     def nomes(self):
