@@ -5,7 +5,7 @@ Uso, a partir da pasta orquestrador:
                                     [--experimento ingestao]
 
 A carga dura 12 minutos, e os 2 primeiros são descartados como aquecimento no resumo de CPU e
-memória. Os geradores são os mesmos da saturação, com o mesmo formato de itens (A17) e, nas
+memória. O disco não é medido aqui, só no cenário realista (A27). Os geradores são os mesmos da saturação, com o mesmo formato de itens (A17) e, nas
 métricas, as mesmas 100 mil séries (A25). Uma execução já concluída é pulada, o que permite
 retomar uma sequência interrompida.
 """
@@ -179,10 +179,7 @@ def executar_ingestao(ferramenta, nivel, repeticao, duracao, experimento):
         if resumo.get("enviados"):
             resumo["perda_real_pct"] = round(
                 100 * (resumo["enviados"] - recebidos) / resumo["enviados"], 3)
-    # Nas métricas, armazenados é o número de séries, então o disco por item usa as amostras
-    itens = carga_resumo["itens_entregues"] if par == "metricas" else resumo["armazenados"]
-    if itens:
-        resumo["bytes_por_item"] = round(resumo["disco_liquido_kib"] * 1024 / itens, 2)
+    # O disco não é medido na ingestão, só no cenário realista (A27)
     with open(execucao.pasta / "resumo.json", "w") as arquivo:
         json.dump(resumo, arquivo, indent=2, ensure_ascii=False)
 
@@ -190,8 +187,8 @@ def executar_ingestao(ferramenta, nivel, repeticao, duracao, experimento):
     print(f"[{ferramenta} {nivel}pct rep{repeticao}] entregue {c['entregue']} de {c['alvo']}/s, "
           f"último minuto {c['entregue_ultimo_minuto']}/s, "
           f"{'sustentada' if c['sustentada'] else 'NÃO sustentada'}, "
-          f"perda {resumo.get('perda_real_pct', resumo.get('perda_pct'))}%, "
-          f"{resumo.get('bytes_por_item')} bytes por item", flush=True)
+          f"perda {resumo.get('perda_real_pct', resumo.get('perda_pct', 'sem Collector'))}%",
+          flush=True)
     return resumo
 
 

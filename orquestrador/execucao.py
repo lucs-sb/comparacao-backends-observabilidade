@@ -42,6 +42,9 @@ class Execucao:
     condicao: str           # nível da carga, por exemplo 50pct ou 100mil
     repeticao: int
     aquecimento_s: int = 120  # descartado no resumo de CPU e memória
+    # O disco só é medido no cenário realista. Nos sintéticos, o conteúdo repetido dos
+    # geradores não representa a compressão de dados reais (A27).
+    medir_disco: bool = False
 
     @property
     def pasta(self):
@@ -89,8 +92,9 @@ def executar(execucao, carga):
     if usa_collector:
         subir_cadvisor(HOST_DEMO)
     backend.subir()
-    leituras, _, _ = medir_disco_estavel(backend)
-    resumo["disco_vazio_kib"] = leituras[-1]
+    if execucao.medir_disco:
+        leituras, _, _ = medir_disco_estavel(backend)
+        resumo["disco_vazio_kib"] = leituras[-1]
     if usa_collector:
         etapa(f"subindo o Collector com {par_collector}.yaml")
         collector.subir(par_collector)
@@ -114,17 +118,22 @@ def executar(execucao, carga):
         collector.parar()
 
     # 5. Descarga e medição do disco
-    etapa("descarregando, contando e medindo o disco")
+    etapa("descarregando, contando e medindo o disco" if execucao.medir_disco
+          else "descarregando e contando")
     backend.descarregar()
     resumo["armazenados"] = backend.contar()
     if resumo.get("enviados"):
         perda = resumo["enviados"] - resumo["armazenados"]
         resumo["perda_pct"] = round(100 * perda / resumo["enviados"], 3)
-    leituras, estavel, espera = medir_disco_estavel(backend)
-    resumo["disco_final_kib"] = leituras[-1]
-    resumo["disco_liquido_kib"] = leituras[-1] - resumo["disco_vazio_kib"]
-    resumo["disco_estavel"] = estavel
-    resumo["espera_disco_s"] = round(espera)
+    if execucao.medir_disco:
+        inicio_acomodacao = time.time()
+        backend.acomodar()
+        resumo["espera_acomodacao_s"] = round(time.time() - inicio_acomodacao)
+        leituras, estavel, espera = medir_disco_estavel(backend)
+        resumo["disco_final_kib"] = leituras[-1]
+        resumo["disco_liquido_kib"] = leituras[-1] - resumo["disco_vazio_kib"]
+        resumo["disco_estavel"] = estavel
+        resumo["espera_disco_s"] = round(espera)
 
     # 6. Exportação: os CSV brutos já estão na pasta, e o resumo marca a execução como concluída
     resumo["recursos_backend"] = resumir(execucao.pasta / "recursos_backend.csv",

@@ -64,3 +64,9 @@ class Backend:
 
     def descarregar(self):
         raise NotImplementedError
+
+    def acomodar(self):
+        """Espera o backend terminar a reorganização dos dados antes da medida de disco.
+
+        Por padrão não há o que esperar. O Elasticsearch espera as fusões de segmentos (A27).
+        """

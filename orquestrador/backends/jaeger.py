@@ -27,5 +27,8 @@ class Jaeger(Backend):
     def descarregar(self):
         self.es.descarregar()
 
+    def acomodar(self):
+        self.es.acomodar()
+
     def medir_disco(self):
         return self.es.medir_disco()
