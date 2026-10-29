@@ -40,7 +40,7 @@ class Elasticsearch(Backend):
         requests.post(f"{self.url}/_flush?wait_if_ongoing=true", timeout=600).raise_for_status()
 
     def fusoes_em_andamento(self):
-        r = requests.get(f"{self.url}/_nodes/stats/indices/merges", timeout=30)
+        r = requests.get(f"{self.url}/_nodes/stats/indices/merge", timeout=30)
         r.raise_for_status()
         return sum(n["indices"]["merges"]["current"] for n in r.json()["nodes"].values())
 
