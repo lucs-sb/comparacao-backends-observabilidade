@@ -16,7 +16,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 500M
+          memory: 1000M   # 500M na Demo; subiu de 259 a 316M em 12 minutos de carga
     restart: unless-stopped
     ports:
       - "${AGENT_PORT}"

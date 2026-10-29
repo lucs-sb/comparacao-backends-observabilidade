@@ -5,6 +5,8 @@
 # encerrados por falta de memória, e o product-catalog passava o tempo coletando lixo. A
 # aplicação respondia com erro em mais da metade das requisições (A30). Aqui todos os limites
 # são dobrados, assim como o GOMEMLIMIT dos serviços em Go, que precisa acompanhar o limite.
+# Os que passaram de 60% do limite dobrado e ainda subiam ao fim de 12 minutos (flagd,
+# accounting e o gerador de carga) receberam mais folga.
 services:
   otel-collector:
     deploy:
@@ -24,13 +26,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G                          # 1500M na Demo; com 50 usuários chegava a 1,4 GiB
+          memory: 6G                          # 1500M na Demo; chegou a 3,1 GiB em 12 minutos
 
   accounting:
     deploy:
       resources:
         limits:
-          memory: 320M                        # 160M na Demo
+          memory: 480M                        # 160M na Demo; com o dobro, subiu de 182 a 200M
 
   ad:
     deploy:
@@ -68,9 +70,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 150M                        # 75M na Demo
+          memory: 300M                        # 75M na Demo; com o dobro, chegou a 148 de 150M
     environment:
-      - GOMEMLIMIT=120MiB                 # 60MiB na Demo
+      - GOMEMLIMIT=240MiB                 # 60MiB na Demo
 
   flagd-ui:
     deploy:
