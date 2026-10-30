@@ -1,13 +1,9 @@
-receivers:
-  filelog:
-    include: [/var/log/flog/*.log]
-    start_at: beginning
 exporters:
   elasticsearch:
     endpoint: http://elasticsearch:9200
 service:
   pipelines:
     logs:
-      receivers: [otlp, filelog]
+      receivers: [otlp]
       processors: [memory_limiter, batch]
       exporters: [elasticsearch]

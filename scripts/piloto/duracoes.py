@@ -1,7 +1,7 @@
 """Duração de cada execução já feita, para estimar o tempo do experimento completo (P11).
 
 Uso, na raiz do repositório:
-    python3 scripts/duracoes.py [resultados]
+    python3 scripts/piloto/duracoes.py [resultados]
 
 Cada execução tem uma pasta com um resumo.json. A duração total vai da criação da pasta até a
 última gravação do resumo, o que inclui limpar o ambiente, subir o backend, aplicar a carga,

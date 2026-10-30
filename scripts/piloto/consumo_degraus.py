@@ -1,6 +1,6 @@
 """CPU média e memória máxima de cada contêiner em cada degrau de uma rampa.
 
-Uso, a partir da raiz do repositório: python3 scripts/consumo_degraus.py <pasta da execução>
+Uso, a partir da raiz do repositório: python3 scripts/piloto/consumo_degraus.py <pasta da execução>
 
 Mostra o backend sempre, o Collector nos pares de logs e traces e o gerador no par de métricas.
 """

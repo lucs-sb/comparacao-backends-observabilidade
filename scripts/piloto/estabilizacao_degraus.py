@@ -1,6 +1,6 @@
 """Evolução de cada degrau minuto a minuto, para conferir a duração dos degraus (P2).
 
-Uso, a partir da raiz do repositório: python3 scripts/estabilizacao_degraus.py <pasta da execução>
+Uso, a partir da raiz do repositório: python3 scripts/piloto/estabilizacao_degraus.py <pasta da execução>
 
 Para cada degrau, mostra por minuto a taxa entregue ao backend e, nos pares com Collector, a
 fila média do exportador. O degrau é estável quando o segundo e o terceiro minuto entregam

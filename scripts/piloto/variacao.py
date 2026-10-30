@@ -1,7 +1,7 @@
 """Variação entre repetições, para decidir o número de repetições (P10).
 
-Uso, a partir da raiz do repositório: python3 scripts/variacao.py <pasta do experimento>
-Exemplo: python3 scripts/variacao.py resultados/piloto-ingestao
+Uso, a partir da raiz do repositório: python3 scripts/piloto/variacao.py <pasta do experimento>
+Exemplo: python3 scripts/piloto/variacao.py resultados/piloto-ingestao
 
 Para cada ferramenta e condição, mostra média, desvio padrão e coeficiente de variação (CV)
 da CPU e da memória do backend e do disco por item. Depois compara as duas ferramentas de

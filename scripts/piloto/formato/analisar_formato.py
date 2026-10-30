@@ -1,6 +1,20 @@
 """Formato dos logs e traces da Demo (P6), a partir dos arquivos do exportador file.
 
-Uso: python3 scripts/analisar_formato.py /tmp/tcc-medicao
+Os arquivos vêm da Demo rodando com o Collector configurado para gravar em disco, sem backend.
+Para reproduzir, a partir da raiz do repositório, com a Demo já clonada em
+demo/opentelemetry-demo (o realista.py clona na primeira execução):
+
+    mkdir -p /tmp/tcc-medicao && chmod 777 /tmp/tcc-medicao
+    cp scripts/piloto/formato/extras-medicao.yml \
+       demo/opentelemetry-demo/src/otel-collector/otelcol-config-extras.yml
+    cd demo/opentelemetry-demo
+    docker compose --env-file .env --env-file ../../versoes.env -f compose.yaml \
+        -f compose.full.yaml -f ../compose.agente.yml -f ../compose.override.yml \
+        -f ../../scripts/piloto/formato/compose.medicao.yml up -d
+    # depois de cerca de 10 minutos de carga do Locust da Demo:
+    docker compose ... down
+    python3 scripts/piloto/formato/analisar_formato.py /tmp/tcc-medicao
+
 Grava também formato.json na mesma pasta. Usa só a biblioteca padrão do Python.
 """
 import json

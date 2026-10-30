@@ -1,6 +1,6 @@
 """CPU e memória minuto a minuto de uma execução, para conferir o aquecimento descartado (P3).
 
-Uso, a partir da raiz do repositório: python3 scripts/aquecimento.py <pasta da execução>
+Uso, a partir da raiz do repositório: python3 scripts/piloto/aquecimento.py <pasta da execução>
 
 Para cada contêiner do backend e do Collector, mostra a CPU média e a memória mediana de cada
 minuto da carga e o primeiro minuto a partir do qual as duas ficam a menos de 10% do regime,

@@ -29,10 +29,6 @@ def gerar_logs():
                            "--body", "teste tcc", "--service", "tcc-teste")
 
 
-def gerar_flog():
-    geradores.flog(1000)
-
-
 def gerar_traces():
     # 100 traces com 1 span pai e 5 filhos cada, ou seja, 600 spans
     geradores.telemetrygen("traces", "--traces", "100", "--child-spans", "5", "--rate", "10",
@@ -58,9 +54,7 @@ def avalanche_direto(url):
 
 CASOS = {
     "logs-loki": (Loki, "logs-loki", "log_records", gerar_logs, 1000),
-    "logs-loki-flog": (Loki, "logs-loki", "log_records", gerar_flog, 1000),
     "logs-es": (Elasticsearch, "logs-es", "log_records", gerar_logs, 1000),
-    "logs-es-flog": (Elasticsearch, "logs-es", "log_records", gerar_flog, 1000),
     "traces-jaeger": (Jaeger, "traces-jaeger", "spans", gerar_traces, 600),
     "traces-zipkin": (Zipkin, "traces-zipkin", "spans", gerar_traces, 600),
     "metricas-prom": (Prometheus, None, "metric_points",
