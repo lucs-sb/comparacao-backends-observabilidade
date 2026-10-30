@@ -5,7 +5,7 @@ Uso, a partir da pasta orquestrador:
                     [--desligar] [--plano]
 
 Cada bloco é uma repetição e contém as 40 combinações de experimento, ferramenta e condição,
-em ordem sorteada dentro do bloco. Os 5 blocos somam 200 execuções. A ordem é sorteada uma
+em ordem sorteada dentro do bloco. Os 10 blocos somam 400 execuções. A ordem é sorteada uma
 única vez, com semente fixa, e gravada em resultados/plano.json, para que uma retomada siga
 a mesma sequência. Sortear a ordem dentro de cada bloco espalha as ferramentas ao longo do
 tempo, para que variações de desempenho da nuvem não favoreçam sempre a mesma.
@@ -48,7 +48,7 @@ FALHAS = RESULTADOS / "_falhas"
 REGISTROS = RESULTADOS / "_rodar"
 ORQUESTRADOR = Path(__file__).resolve().parent
 
-BLOCOS = 5
+BLOCOS = 10
 SEMENTE = 20261030
 TENTATIVAS = 3             # por execução, em cada chamada do rodar.py
 USUARIOS = 50              # usuários do Locust no cenário realista
@@ -94,7 +94,7 @@ def combinacoes():
 
 
 def criar_plano(semente):
-    """Sorteia a ordem das combinações em cada bloco e devolve o plano com as 200 execuções."""
+    """Sorteia a ordem das combinações em cada bloco e devolve o plano com as 400 execuções."""
     sorteio = random.Random(semente)
     execucoes = []
     for bloco in range(1, BLOCOS + 1):

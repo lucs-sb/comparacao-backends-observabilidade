@@ -62,15 +62,15 @@ Em todas as instâncias, o cAdvisor lê a CPU e a memória de cada contêiner a 
 
 | Experimento | O que mede | Condições | Execuções |
 |---|---|---|---|
-| Saturação | vazão máxima de cada ferramenta | degraus de 3 min, de 50% a 150% da vazão estimada, em passos de 10% | 6 ferramentas × 5 = 30 |
-| Ingestão | CPU, memória e perda sob carga constante | 25%, 50% e 75% de S, por 12 min | 6 × 3 × 5 = 90 |
-| Cardinalidade | efeito do número de séries nas métricas | 100 mil, 500 mil e 1 milhão de séries, por 12 min | 2 × 3 × 5 = 30 |
-| Cenário realista | CPU, memória, perda e disco com dados reais | Demo com 50 usuários, por 12 min | 6 × 5 = 30 |
-| Consulta | tempo das consultas | volume fixo e 30 consultas medidas | 4 × 5 = 20 |
+| Saturação | vazão máxima de cada ferramenta | degraus de 3 min, de 50% a 150% da vazão estimada, em passos de 10% | 6 ferramentas × 10 = 60 |
+| Ingestão | CPU, memória e perda sob carga constante | 25%, 50% e 75% de S, por 12 min | 6 × 3 × 10 = 180 |
+| Cardinalidade | efeito do número de séries nas métricas | 100 mil, 500 mil e 1 milhão de séries, por 12 min | 2 × 3 × 10 = 60 |
+| Cenário realista | CPU, memória, perda e disco com dados reais | Demo com 50 usuários, por 12 min | 6 × 10 = 60 |
+| Consulta | tempo das consultas | volume fixo e 30 consultas medidas | 4 × 10 = 40 |
 
 S é a vazão de referência de cada par, a menor vazão máxima entre as duas ferramentas. Assim as duas recebem a mesma carga, e nenhuma é levada além do que aguenta. Nos experimentos de 12 minutos, os 2 primeiros são descartados como aquecimento.
 
-As 200 execuções são feitas em 5 blocos aleatorizados. Cada bloco contém uma repetição de cada uma das 40 combinações de experimento, ferramenta e condição, em ordem sorteada. Isso espalha as ferramentas ao longo do tempo, para que variações de desempenho da nuvem não favoreçam sempre a mesma.
+As 400 execuções são feitas em 10 blocos aleatorizados. Cada bloco contém uma repetição de cada uma das 40 combinações de experimento, ferramenta e condição, em ordem sorteada. Isso espalha as ferramentas ao longo do tempo, para que variações de desempenho da nuvem não favoreçam sempre a mesma.
 
 Cada execução segue o mesmo roteiro, definido em `orquestrador/execucao.py`:
 
