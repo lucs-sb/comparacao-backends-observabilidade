@@ -108,6 +108,7 @@ Cada execução segue o mesmo roteiro, definido em `orquestrador/execucao.py`:
 ├── scripts/
 │   ├── gerar_logs_consulta.py   arquivos de logs do experimento de consulta
 │   └── piloto/              análises usadas para calibrar os parâmetros
+├── analise/                 análise estatística, tabelas e figuras dos resultados
 ├── versoes.env              versões fixadas de todas as ferramentas
 ├── ambiente.env.exemplo     exemplo da configuração das instâncias
 ├── requirements.txt         dependências do orquestrador
