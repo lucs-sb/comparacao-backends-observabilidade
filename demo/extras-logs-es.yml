@@ -13,7 +13,7 @@ exporters:
     endpoint: http://elasticsearch:9200
     # O padrão do exportador junta lotes de 1 MB, espera até 10 s para completá-los e aceita
     # só 10 requisições na fila. Com os muitos envios pequenos da Demo, ele entregava cerca de
-    # 13 logs/s e recusava o resto, o que travava os serviços (A32). Com 1000 requisições na
+    # 13 logs/s e recusava o resto, o que travava os serviços. Com 1000 requisições na
     # fila e lotes enviados a cada 1 s, ele acompanha a Demo. O Collector isolado dos
     # experimentos sintéticos mantém o padrão, porque lá os lotes enchem rápido.
     sending_queue:

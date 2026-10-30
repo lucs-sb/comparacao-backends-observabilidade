@@ -1,4 +1,4 @@
-"""Duração de cada execução já feita, para estimar o tempo do experimento completo (P11).
+"""Duração de cada execução já feita, para estimar o tempo e o custo do experimento completo.
 
 Uso, na raiz do repositório:
     python3 scripts/piloto/duracoes.py [resultados]
@@ -27,6 +27,7 @@ def criacao(pasta):
 
 
 def main():
+    """Mostra a duração de cada execução e as médias por experimento, par e ferramenta."""
     raiz = Path(sys.argv[1] if len(sys.argv) > 1 else "resultados")
     linhas = []
     for resumo in sorted(raiz.rglob("resumo.json")):

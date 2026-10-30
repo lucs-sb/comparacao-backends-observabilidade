@@ -1,4 +1,4 @@
-"""Variação entre repetições, para decidir o número de repetições (P10).
+"""Variação entre repetições, para decidir quantas repetições cada condição precisa.
 
 Uso, a partir da raiz do repositório: python3 scripts/piloto/variacao.py <pasta do experimento>
 Exemplo: python3 scripts/piloto/variacao.py resultados/piloto-ingestao
@@ -21,6 +21,7 @@ METRICAS = {
 
 
 def carregar(raiz):
+    """Resumos agrupados por par, condição e ferramenta."""
     grupos = {}
     for arquivo in sorted(Path(raiz).glob("*/*/*/rep*/resumo.json")):
         with open(arquivo) as f:
@@ -31,6 +32,7 @@ def carregar(raiz):
 
 
 def estatisticas(valores):
+    """Média, desvio padrão, coeficiente de variação em porcentagem e número de valores."""
     valores = [v for v in valores if v is not None]
     if len(valores) < 2:
         return None

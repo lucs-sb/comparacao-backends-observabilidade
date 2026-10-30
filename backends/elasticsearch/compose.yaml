@@ -1,3 +1,9 @@
+# Elasticsearch em nó único, sem autenticação, na instância 1.
+# Serve de backend no par de logs e de armazenamento do Jaeger e do Zipkin no par de traces.
+# ES_MEM e ES_HEAP vêm do orquestrador, conforme o par (ambiente.env). Os valores depois de
+# :- são os padrões para rodar num computador pessoal. O heap fica em cerca de metade da
+# memória do contêiner, e o resto sobra para o cache de arquivos do sistema, que guarda os
+# segmentos lidos com frequência.
 services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:${ES_VERSION}

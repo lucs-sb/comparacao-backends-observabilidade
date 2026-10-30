@@ -1,4 +1,4 @@
-"""Evolução de cada degrau minuto a minuto, para conferir a duração dos degraus (P2).
+"""Evolução de cada degrau minuto a minuto, para conferir que 3 minutos por degrau bastam.
 
 Uso, a partir da raiz do repositório: python3 scripts/piloto/estabilizacao_degraus.py <pasta da execução>
 

@@ -1,3 +1,6 @@
+# Parte comum do Collector isolado: recebe OTLP, limita a memória a 85% do contêiner, agrupa
+# os itens em lotes e expõe as métricas internas detalhadas na porta 8888, sem enviá-las a
+# backend algum. Os arquivos de cada par acrescentam o exportador e o pipeline.
 receivers:
   otlp:
     protocols:

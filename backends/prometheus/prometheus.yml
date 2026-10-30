@@ -1,2 +1,4 @@
+# Configuração mínima: o Prometheus exige um arquivo, mas aqui não coleta nenhum alvo, porque
+# as amostras chegam por escrita remota.
 global:
   scrape_interval: 15s

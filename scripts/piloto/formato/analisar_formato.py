@@ -1,4 +1,7 @@
-"""Formato dos logs e traces da Demo (P6), a partir dos arquivos do exportador file.
+"""Formato dos logs e traces da Demo, a partir dos arquivos do exportador file.
+
+Mede o tamanho do corpo dos logs, o número de atributos e de spans por trace, valores que o
+formato.py reproduz nos geradores sintéticos.
 
 Os arquivos vêm da Demo rodando com o Collector configurado para gravar em disco, sem backend.
 Para reproduzir, a partir da raiz do repositório, com a Demo já clonada em
@@ -25,6 +28,7 @@ from pathlib import Path
 
 
 def resumo(valores):
+    """Quantidade, média, mediana, percentil 90 e máximo de uma lista de números."""
     if not valores:
         return {}
     ordenados = sorted(valores)
@@ -38,6 +42,7 @@ def resumo(valores):
 
 
 def servico(recurso):
+    """Nome do serviço nos atributos de um recurso OTLP, ou ? se faltar."""
     for atributo in recurso.get("attributes", []):
         if atributo["key"] == "service.name":
             return atributo["value"].get("stringValue", "?")
@@ -45,12 +50,14 @@ def servico(recurso):
 
 
 def texto_do_corpo(corpo):
+    """Corpo de um log como texto, para medir o tamanho em bytes."""
     if "stringValue" in corpo:
         return corpo["stringValue"]
     return json.dumps(corpo, ensure_ascii=False)  # corpos estruturados contam pelo JSON
 
 
 def analisar_logs(arquivo):
+    """Tamanho do corpo, atributos e serviços dos logs gravados pelo exportador file."""
     corpos, atributos, tamanhos, recursos = [], [], [], []
     servicos, severidades = Counter(), Counter()
     with open(arquivo) as f:
@@ -78,6 +85,7 @@ def analisar_logs(arquivo):
 
 
 def analisar_traces(arquivo):
+    """Spans por trace, serviços por trace, atributos e eventos dos spans gravados."""
     spans_por_trace = Counter()
     servicos_por_trace = defaultdict(set)
     atributos, eventos, tamanhos, duracoes = [], [], [], []
@@ -112,6 +120,7 @@ def analisar_traces(arquivo):
 
 
 def main():
+    """Analisa os arquivos da pasta, grava formato.json e mostra o resultado."""
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     pasta = Path(sys.argv[1])

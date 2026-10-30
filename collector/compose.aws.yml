@@ -1,4 +1,5 @@
-# Só na AWS: os nomes dos backends apontam para o IP privado da instância 1.
+# Só na AWS: os nomes dos backends apontam para o IP privado da instância 1, já que o
+# Collector roda na instância 2 e os backends, na 1.
 services:
   otelcol:
     extra_hosts:

@@ -1,3 +1,6 @@
+# Zipkin com armazenamento no Elasticsearch. Os índices têm 1 shard e 0 réplicas, como os do
+# Jaeger. TRACES_MEM e ZIPKIN_HEAP vêm do ambiente.env, e o orçamento de memória é o mesmo do
+# Jaeger.
 services:
   zipkin:
     image: openzipkin/zipkin-slim:${ZIPKIN_VERSION}

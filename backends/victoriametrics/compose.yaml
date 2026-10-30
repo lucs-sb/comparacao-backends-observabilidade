@@ -1,3 +1,6 @@
+# VictoriaMetrics em nó único, recebendo amostras por escrita remota no mesmo caminho do
+# Prometheus. O cache de consultas fica desligado, como o do Loki.
+# BACKEND_MEM vem do ambiente.env, e o valor depois de :- é o padrão local.
 services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:${VM_VERSION}

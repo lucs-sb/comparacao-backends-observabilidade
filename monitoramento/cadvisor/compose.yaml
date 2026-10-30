@@ -1,5 +1,6 @@
 # cAdvisor: CPU e memória de cada contêiner, atualizados a cada segundo.
-# Roda na instância 1 durante todos os experimentos e fica fora das medidas.
+# Roda nas três instâncias: na 1 mede o backend, na 2 o Collector ou a Demo, e na 3 os
+# geradores. Fica no ar entre as execuções e é excluído das medidas.
 services:
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:${CADVISOR_VERSION}

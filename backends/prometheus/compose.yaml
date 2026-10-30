@@ -1,3 +1,5 @@
+# Prometheus recebendo amostras por escrita remota (remote write), sem coletar alvos.
+# BACKEND_MEM vem do ambiente.env, e o valor depois de :- é o padrão local.
 services:
   prometheus:
     image: prom/prometheus:${PROM_VERSION}

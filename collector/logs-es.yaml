@@ -1,3 +1,4 @@
+# Par de logs, Elasticsearch: envia pelo exportador elasticsearch, que grava nos data streams logs-*.
 exporters:
   elasticsearch:
     endpoint: http://elasticsearch:9200

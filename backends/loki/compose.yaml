@@ -1,3 +1,5 @@
+# Loki em modo monolítico, com dados no volume loki-data e a configuração de loki.yaml.
+# BACKEND_MEM vem do ambiente.env, e o valor depois de :- é o padrão local.
 services:
   loki:
     image: grafana/loki:${LOKI_VERSION}

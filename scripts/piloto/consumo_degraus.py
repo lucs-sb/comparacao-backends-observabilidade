@@ -1,4 +1,4 @@
-"""CPU média e memória máxima de cada contêiner em cada degrau de uma rampa.
+"""CPU média e memória máxima de cada contêiner em cada degrau de uma rampa ou saturação.
 
 Uso, a partir da raiz do repositório: python3 scripts/piloto/consumo_degraus.py <pasta da execução>
 
@@ -14,6 +14,7 @@ ACOMODACAO = 10  # segundos ignorados no início e no fim de cada degrau, como n
 
 
 def consumo(arquivo, inicio, fim):
+    """CPU média e memória máxima de cada contêiner entre dois instantes, num CSV de recursos."""
     por = {}
     with open(arquivo) as f:
         for l in csv.DictReader(f):

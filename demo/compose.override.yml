@@ -3,7 +3,7 @@
 # Os limites de memória da Demo 3.1.0 foram pensados para rodar tudo num computador pessoal.
 # Com 50 usuários por 12 minutos, o ad, o astronomy-db (PostgreSQL) e o frontend eram
 # encerrados por falta de memória, e o product-catalog passava o tempo coletando lixo. A
-# aplicação respondia com erro em mais da metade das requisições (A30). Aqui todos os limites
+# aplicação respondia com erro em mais da metade das requisições. Aqui todos os limites
 # são dobrados, assim como o GOMEMLIMIT dos serviços em Go, que precisa acompanhar o limite.
 # Os que passaram de 60% do limite dobrado e ainda subiam ao fim de 12 minutos (flagd,
 # accounting e o gerador de carga) receberam mais folga.

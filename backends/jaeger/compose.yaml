@@ -1,9 +1,11 @@
+# Jaeger 2, que guarda os spans no Elasticsearch, com a configuração de jaeger.yaml.
+# TRACES_MEM vem do ambiente.env e é o mesmo orçamento de memória do Zipkin.
 services:
   jaeger:
     image: jaegertracing/jaeger:${JAEGER_VERSION}
     command: ["--config", "/etc/jaeger/jaeger.yaml"]
     environment:
-      - OTEL_TRACES_SAMPLER=always_off
+      - OTEL_TRACES_SAMPLER=always_off   # sem isso, o Jaeger grava spans sobre si mesmo
     mem_limit: ${TRACES_MEM:-1g}
     ports: ["16686:16686"]
     volumes: ["./jaeger.yaml:/etc/jaeger/jaeger.yaml:ro"]

@@ -1,5 +1,5 @@
 # Experimento de consulta, par de logs com o Loki: lê os arquivos fixos de logs gerados pelo
-# flog (P7). O nome de cada arquivo vira o service.name do recurso, que o Loki transforma no
+# flog. O nome de cada arquivo vira o service.name do recurso, que o Loki transforma no
 # rótulo service_name. Assim, os 100 arquivos são 100 serviços, cada um com 1% dos logs.
 receivers:
   filelog:

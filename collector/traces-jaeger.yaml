@@ -1,3 +1,4 @@
+# Par de traces, Jaeger: envia por OTLP HTTP, o protocolo nativo do Jaeger 2.
 exporters:
   otlp_http/jaeger:
     endpoint: http://jaeger:4318

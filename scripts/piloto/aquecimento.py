@@ -1,4 +1,4 @@
-"""CPU e memória minuto a minuto de uma execução, para conferir o aquecimento descartado (P3).
+"""CPU e memória minuto a minuto de uma execução, para conferir os 2 minutos de aquecimento.
 
 Uso, a partir da raiz do repositório: python3 scripts/piloto/aquecimento.py <pasta da execução>
 
@@ -48,6 +48,7 @@ def estabiliza(linhas):
     memoria = sum(l[2] for l in regime) / len(regime)
 
     def dentro(l):
+        """Se a CPU e a memória do minuto estão a menos de FAIXA do regime."""
         return abs(l[1] - cpu) <= FAIXA * max(cpu, 1) and abs(l[2] - memoria) <= FAIXA * memoria
 
     for i, l in enumerate(linhas[:-1]):

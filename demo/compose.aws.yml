@@ -1,4 +1,5 @@
-# Só na AWS: os nomes dos backends apontam para o IP privado da instância 1.
+# Só na AWS: os nomes dos backends apontam para o IP privado da instância 1, para que o
+# Collector da Demo, na instância 2, alcance o backend avaliado.
 services:
   otel-collector:
     extra_hosts:

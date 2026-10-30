@@ -1,3 +1,5 @@
+# Configuração do Jaeger 2, que é montado sobre o OpenTelemetry Collector: recebe OTLP e
+# grava no Elasticsearch, com a interface de consulta na porta 16686.
 service:
   extensions: [jaeger_storage, jaeger_query, healthcheckv2]
   pipelines:
@@ -21,8 +23,11 @@ extensions:
         elasticsearch:
           server_urls: [http://elasticsearch:9200]
           bulk_processing:
+            # O padrão é um worker de gravação em lote, que limitava o Jaeger a um núcleo do
+            # Elasticsearch. Dez é o mesmo paralelismo de envio que o Collector usa nos pares
+            # que gravam no Elasticsearch.
             workers: 10
-          indices:
+          indices:                     # 1 shard e 0 réplicas, os mesmos valores do Zipkin e dos logs
             index_prefix: jaeger-main
             spans: {shards: 1, replicas: 0}
             services: {shards: 1, replicas: 0}

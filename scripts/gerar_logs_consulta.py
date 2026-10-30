@@ -1,4 +1,4 @@
-"""Divide a saída do flog nos arquivos fixos do experimento de consulta (P7).
+"""Divide a saída do flog nos arquivos fixos do experimento de consulta.
 
 Uso, na instância 2 (o orquestrador chama sozinho quando os arquivos não existem):
     docker run --rm <imagem do flog> -f apache_combined -n 1000000 -t stdout \

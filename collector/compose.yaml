@@ -1,3 +1,7 @@
+# Collector isolado dos experimentos sintéticos, na instância 2.
+# O orquestrador define PAR, o arquivo de configuração do par, que é carregado depois do
+# base.yaml. As portas 4317 e 4318 recebem OTLP, e a 8888 expõe as métricas internas lidas
+# pelo orquestrador. O volume flog-logs guarda os arquivos de logs do experimento de consulta.
 services:
   otelcol:
     image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:${OTELCOL_VERSION}

@@ -1,3 +1,4 @@
+# Par de traces, Zipkin: converte os spans para o formato do Zipkin e envia pela API v2.
 exporters:
   zipkin:
     endpoint: http://zipkin:9411/api/v2/spans
