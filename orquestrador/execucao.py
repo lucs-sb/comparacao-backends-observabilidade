@@ -160,6 +160,8 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
         resumo["disco_liquido_kib"] = leituras[-1] - resumo["disco_vazio_kib"]
         resumo["disco_estavel"] = estavel
         resumo["espera_disco_s"] = round(espera)
+        # o disco por pasta separa, por exemplo, o WAL dos dados já compactados (A31)
+        resumo["disco_por_pasta_kib"] = backend.medir_pastas()
 
     # 6. Exportação: os CSV brutos já estão na pasta, e o resumo marca a execução como concluída
     resumo["recursos_backend"] = resumir(execucao.pasta / "recursos_backend.csv",

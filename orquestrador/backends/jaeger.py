@@ -32,3 +32,6 @@ class Jaeger(Backend):
 
     def medir_disco(self):
         return self.es.medir_disco()
+
+    def medir_pastas(self):
+        return self.es.medir_pastas()

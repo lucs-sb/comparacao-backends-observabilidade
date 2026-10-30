@@ -59,6 +59,21 @@ class Backend:
         ).stdout
         return int(saida.split()[0])
 
+    def medir_pastas(self):
+        """Tamanho em KiB de cada pasta e arquivo da raiz do volume, como WAL e dados (A31)."""
+        saida = subprocess.run(
+            ["docker", "run", "--rm", "-v", f"{self.volume}:/d", "alpine", "sh", "-c",
+             "cd /d && du -sk * .[!.]* 2>/dev/null"],
+            env=docker_em(HOST_BACKEND),
+            capture_output=True, text=True,
+        ).stdout
+        pastas = {}
+        for linha in saida.splitlines():
+            tamanho, _, nome = linha.partition("\t")
+            if tamanho.isdigit():
+                pastas[nome] = int(tamanho)
+        return pastas
+
     def contar(self):
         raise NotImplementedError
 
