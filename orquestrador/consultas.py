@@ -38,7 +38,7 @@ MARCADOS = 10                 # traces com tcc.busca=alvo no serviço consultado
 SPANS_POR_TRACE = 1 + formato.FILHOS
 TAXA_TRACES = 800             # spans/s por gerador, 10 em paralelo, cerca de metade do S de traces
 PARALELOS = 10
-LIMITE_LOGS = 5000            # limite de linhas por consulta do Loki, usado nos dois
+LIMITE_LOGS = 1000            # linhas por consulta, o padrão do Grafana para o Loki, nos dois
 LIMITE_TRACES = 200
 REPETICOES = 30
 DADOS = "/home/ubuntu/dados-consulta/logs" if NA_AWS else str(Path.home() / "dados-consulta/logs")

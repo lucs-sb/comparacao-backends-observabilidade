@@ -1,9 +1,9 @@
 """Consultas do par de logs no experimento de consulta (seção 4.7, P7).
 
 Rodado pelo orquestrador num contêiner do Locust, com um único usuário:
-    ALVO=loki|elasticsearch SERVICO=svc-007 TERMO=marcadortcc ESPERADO=5000 REPETICOES=30
+    ALVO=loki|elasticsearch SERVICO=svc-007 TERMO=marcadortcc ESPERADO=1000 REPETICOES=30
 
-Duas consultas, sempre na última hora, com os 5000 registros mais recentes primeiro e sem
+Duas consultas, sempre na última hora, com os 1000 registros mais recentes primeiro e sem
 cache de resultados: filtro_rotulo, que pega os logs de um serviço (1% do total), e
 busca_textual, que procura um termo presente em 1% das linhas de todos os serviços. A busca
 textual do Loki procura um trecho em qualquer posição, e a do Elasticsearch, a palavra inteira,
@@ -21,7 +21,7 @@ SERVICO = os.environ["SERVICO"]
 TERMO = os.environ["TERMO"]
 ESPERADO = int(os.environ["ESPERADO"])
 REPETICOES = int(os.environ.get("REPETICOES", "30"))
-LIMITE = 5000   # limite padrão de linhas por consulta do Loki, usado também no Elasticsearch
+LIMITE = 1000   # linhas por consulta, o padrão do Grafana para logs do Loki, usado nos dois
 
 arquivo = open("/saida/tempos.csv", "w", newline="")
 saida = csv.writer(arquivo)
