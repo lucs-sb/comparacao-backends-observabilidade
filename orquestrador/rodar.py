@@ -14,7 +14,8 @@ execução com resumo.json é considerada concluída e pulada, então basta roda
 novo para continuar de onde parou. A pasta de uma execução incompleta, interrompida ou com
 falha, é movida para resultados/_falhas antes de a execução ser refeita, porque alguns
 arquivos são gravados acumulando e misturariam as duas tentativas. Uma execução em que um
-backend esgota a memória também é descartada e refeita (A24).
+backend esgota a memória também é descartada e refeita (A24), exceto na saturação, em que
+isso acontece no degrau que satura e fica só registrado no resumo.
 
 Opções:
     --experimentos  roda só os experimentos indicados, na ordem do plano
@@ -246,6 +247,13 @@ def guardar_conteineres(e):
     return sem_memoria
 
 
+def marcar_memoria(e, conteineres):
+    arquivo = pasta(e) / "resumo.json"
+    resumo = json.loads(arquivo.read_text())
+    resumo["memoria_esgotada"] = conteineres
+    arquivo.write_text(json.dumps(resumo, indent=2, ensure_ascii=False))
+
+
 def executar_uma(e, registro):
     """Até TENTATIVAS tentativas. Devolve a situação final."""
     for tentativa in range(1, TENTATIVAS + 1):
@@ -262,6 +270,13 @@ def executar_uma(e, registro):
             time.sleep(PAUSA)
             continue
         sem_memoria = guardar_conteineres(e)
+        if sem_memoria and e["experimento"] == "saturacao":
+            # Na saturação, esgotar a memória é um modo de saturar (A24). Os degraus param no
+            # primeiro que não é ok, e a vazão máxima vem do anterior, então a execução vale.
+            registro.linha(f"  memória esgotada em {', '.join(sem_memoria)} no degrau final, "
+                           f"registrada no resumo")
+            marcar_memoria(e, sem_memoria)
+            sem_memoria = []
         if sem_memoria:
             ultima = tentativa == TENTATIVAS
             registro.linha(f"  memória esgotada em {', '.join(sem_memoria)}"
@@ -271,10 +286,7 @@ def executar_uma(e, registro):
                 arquivar(e, "sem_memoria", registro)
                 time.sleep(PAUSA)
                 continue
-            resumo = json.loads((pasta(e) / "resumo.json").read_text())
-            resumo["memoria_esgotada"] = sem_memoria
-            (pasta(e) / "resumo.json").write_text(json.dumps(resumo, indent=2,
-                                                             ensure_ascii=False))
+            marcar_memoria(e, sem_memoria)
             return "sem_memoria"
         registro.linha(f"  concluída em {(time.time() - inicio) / 60:.1f} min")
         historico(e, tentativa, "concluida", inicio)

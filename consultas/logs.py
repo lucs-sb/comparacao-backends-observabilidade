@@ -8,13 +8,18 @@ cache de resultados: filtro_rotulo, que pega os logs de um serviço (1% do total
 busca_textual, que procura um termo presente em 1% das linhas de todos os serviços. A busca
 textual do Loki procura um trecho em qualquer posição, e a do Elasticsearch, a palavra inteira,
 então o termo é sempre uma palavra inteira. Uma resposta 200 com outro número de registros
-conta como falha. Os tempos vão para /saida/tempos.csv.
+conta como falha. Antes das repetições medidas, um aquecimento repete as duas consultas até
+os tempos estabilizarem (aquecimento.py). Os tempos medidos vão para /saida/tempos.csv.
 """
 import csv
 import os
+import sys
 import time
 
 from locust import HttpUser, events, task
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from aquecimento import Aquecimento  # noqa: E402
 
 ALVO = os.environ["ALVO"]
 SERVICO = os.environ["SERVICO"]
@@ -28,10 +33,17 @@ saida = csv.writer(arquivo)
 saida.writerow(["inicio", "consulta", "ms", "status", "erro"])
 
 
+aquecimento = Aquecimento()
+
+
 @events.request.add_listener
 def registrar(name, response_time, response, exception=None, start_time=None, **kwargs):
-    saida.writerow([start_time, name, round(response_time, 3),
-                    getattr(response, "status_code", None), exception or ""])
+    linha = [start_time, name, round(response_time, 3),
+             getattr(response, "status_code", None), exception or ""]
+    if aquecimento.ativo:
+        aquecimento.registrar(*linha)
+    else:
+        saida.writerow(linha)
 
 
 class Base(HttpUser):
@@ -47,6 +59,9 @@ class Base(HttpUser):
             resposta.failure(f"{obtido} registros, esperado {ESPERADO}")
 
     def terminar(self):
+        if aquecimento.ativo:
+            aquecimento.fim_repeticao()
+            return
         self.repeticoes += 1
         if self.repeticoes == REPETICOES:
             arquivo.close()

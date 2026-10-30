@@ -8,14 +8,20 @@ Três consultas na última hora, com limite de 200 traces: busca_servico, os tra
 serviço (1% do total); busca_atributo, os traces desse serviço com o atributo tcc.busca=alvo
 (1% dos traces dele); e busca_identificador, um trace pelo identificador. O identificador é
 obtido uma vez, antes das repetições, pela busca por atributo. Uma resposta 200 com outro
-número de traces ou spans conta como falha. Os tempos vão para /saida/tempos.csv.
+número de traces ou spans conta como falha. Antes das repetições medidas, um aquecimento
+repete as três consultas até os tempos estabilizarem (aquecimento.py). Os tempos medidos vão
+para /saida/tempos.csv.
 """
 import csv
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 
 from locust import HttpUser, events, task
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from aquecimento import Aquecimento  # noqa: E402
 
 ALVO = os.environ["ALVO"]
 SERVICO = os.environ["SERVICO"]
@@ -30,12 +36,19 @@ saida = csv.writer(arquivo)
 saida.writerow(["inicio", "consulta", "ms", "status", "erro"])
 
 
+aquecimento = Aquecimento()
+
+
 @events.request.add_listener
 def registrar(name, response_time, response, exception=None, start_time=None, **kwargs):
     if name == "preparo":
         return  # a busca do identificador não entra nos tempos
-    saida.writerow([start_time, name, round(response_time, 3),
-                    getattr(response, "status_code", None), exception or ""])
+    linha = [start_time, name, round(response_time, 3),
+             getattr(response, "status_code", None), exception or ""]
+    if aquecimento.ativo:
+        aquecimento.registrar(*linha)
+    else:
+        saida.writerow(linha)
 
 
 def preparar(usuario):
@@ -65,6 +78,9 @@ class Base(HttpUser):
         self.consultar("busca_servico", {}, ESPERADO_SERVICO)
         self.consultar("busca_atributo", self.filtro_atributo(), ESPERADO_ATRIBUTO)
         self.buscar_identificador("busca_identificador", self.identificador)
+        if aquecimento.ativo:
+            aquecimento.fim_repeticao()
+            return
         self.repeticoes += 1
         if self.repeticoes == REPETICOES:
             arquivo.close()

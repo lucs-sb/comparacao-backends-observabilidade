@@ -10,8 +10,11 @@ cada, e 10 traces a mais com o atributo tcc.busca=alvo no serviço consultado. A
 serviço pega 1% dos traces, e a busca por atributo, 1% dos traces desse serviço.
 
 Depois da ingestão, o backend grava tudo e termina as fusões em andamento, para que as
-consultas não disputem recursos com a indexação. Cada consulta é repetida 30 vezes por um
-único usuário do Locust, e os tempos ficam em tempos.csv na pasta da execução.
+consultas não disputem recursos com a indexação. Um único usuário do Locust repete as
+consultas num aquecimento não medido, até os tempos estabilizarem (consultas/aquecimento.py),
+e depois mais 30 vezes. Os tempos medidos ficam em tempos.csv na pasta da execução, e o resumo
+traz a variação entre as 10 primeiras e as 10 últimas repetições de cada consulta, para
+conferir que o aquecimento bastou (A12).
 """
 import argparse
 import csv
@@ -119,21 +122,43 @@ def rodar_locust(pasta, ferramenta):
             stdout=registro, stderr=subprocess.STDOUT, check=False)
 
 
+def _postos(valores):
+    ordem = sorted(range(len(valores)), key=lambda i: valores[i])
+    postos = [0] * len(valores)
+    for posto, i in enumerate(ordem):
+        postos[i] = posto
+    return postos
+
+
+def _spearman(valores):
+    """Correlação de postos entre a ordem das repetições e os tempos."""
+    n = len(valores)
+    if n < 3:
+        return None
+    soma = sum((i - p) ** 2 for i, p in enumerate(_postos(valores)))
+    return round(1 - 6 * soma / (n * (n * n - 1)), 3)
+
+
 def resumir_tempos(arquivo):
-    """Mediana, percentil 95, média e falhas de cada consulta, em milissegundos."""
+    """Mediana, percentil 95, média, falhas e tendência de cada consulta, em milissegundos."""
     por = {}
     with open(arquivo) as f:
         for l in csv.DictReader(f):
             por.setdefault(l["consulta"], []).append(l)
     resumo = {}
     for consulta, ls in por.items():
-        tempos = sorted(float(l["ms"]) for l in ls)
+        na_ordem = [float(l["ms"]) for l in sorted(ls, key=lambda l: float(l["inicio"]))]
+        tempos = sorted(na_ordem)
+        inicio, fim = statistics.median(na_ordem[:10]), statistics.median(na_ordem[-10:])
         resumo[consulta] = {
             "repeticoes": len(ls),
             "falhas": sum(1 for l in ls if l["erro"]),
             "mediana_ms": round(statistics.median(tempos), 1),
             "p95_ms": round(tempos[max(0, round(0.95 * len(tempos)) - 1)], 1),
             "media_ms": round(statistics.mean(tempos), 1),
+            # variação entre as 10 primeiras e as 10 últimas repetições medidas (A12)
+            "variacao_pct": round(100 * (fim / inicio - 1), 1) if inicio else None,
+            "spearman": _spearman(na_ordem),
         }
     return resumo
 
@@ -174,11 +199,18 @@ def executar_consulta(ferramenta, repeticao, experimento):
     resumo.update(tempos)
     arquivo = execucao.pasta / "tempos.csv"
     resumo["consultas"] = resumir_tempos(arquivo) if arquivo.exists() else {}
+    aquecimento = execucao.pasta / "aquecimento.json"
+    if aquecimento.exists():
+        dados = json.loads(aquecimento.read_text())
+        resumo["aquecimento"] = {k: dados[k] for k in ("repeticoes", "incompleto")}
+        print(f"[{ferramenta} fixo rep{repeticao}] aquecimento de {dados['repeticoes']} "
+              f"repetições{', INCOMPLETO' if dados['incompleto'] else ''}", flush=True)
     with open(execucao.pasta / "resumo.json", "w") as saida:
         json.dump(resumo, saida, indent=2, ensure_ascii=False)
     for nome, c in resumo["consultas"].items():
         print(f"[{ferramenta} fixo rep{repeticao}] {nome}: {c['repeticoes']} repetições, "
-              f"{c['falhas']} falhas, mediana {c['mediana_ms']} ms, p95 {c['p95_ms']} ms", flush=True)
+              f"{c['falhas']} falhas, mediana {c['mediana_ms']} ms, p95 {c['p95_ms']} ms, "
+              f"variação {c['variacao_pct']}%", flush=True)
     if not resumo["consultas"]:
         print(f"[{ferramenta} fixo rep{repeticao}] sem tempos, ver locust.log", flush=True)
     return resumo
