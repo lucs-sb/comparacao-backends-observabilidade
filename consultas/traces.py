@@ -1,4 +1,4 @@
-"""Consultas do par de traces no experimento de consulta (seção 4.7, P7).
+"""Consultas do par de traces no experimento de consulta.
 
 Rodado pelo orquestrador num contêiner do Locust, com um único usuário:
     ALVO=jaeger|zipkin SERVICO=svc-007 REPETICOES=30
@@ -41,6 +41,7 @@ aquecimento = Aquecimento()
 
 @events.request.add_listener
 def registrar(name, response_time, response, exception=None, start_time=None, **kwargs):
+    """Chamada pelo Locust a cada requisição: grava o tempo no aquecimento ou nos medidos."""
     if name == "preparo":
         return  # a busca do identificador não entra nos tempos
     linha = [start_time, name, round(response_time, 3),
@@ -60,11 +61,17 @@ def preparar(usuario):
 
 
 class Base(HttpUser):
-    abstract = True
+    """Usuário do Locust com a conferência das respostas e as três consultas de cada repetição."""
+    abstract = True   # o Locust não cria usuários desta classe, só das filhas
     repeticoes = 0
     identificador = None
 
     def conferir(self, resposta, contar, esperado):
+        """Marca a requisição como falha se o status não for 200 ou as contagens forem outras.
+
+        esperado é o par (traces, spans). Devolve o que contar extraiu da resposta, com os
+        identificadores dos traces no terceiro item.
+        """
         if resposta.status_code != 200:
             resposta.failure(f"status {resposta.status_code}")
             return None
@@ -75,6 +82,7 @@ class Base(HttpUser):
 
     @task
     def consultas(self):
+        """Uma repetição: busca por serviço, por atributo e por identificador, nessa ordem."""
         self.consultar("busca_servico", {}, ESPERADO_SERVICO)
         self.consultar("busca_atributo", self.filtro_atributo(), ESPERADO_ATRIBUTO)
         self.buscar_identificador("busca_identificador", self.identificador)
@@ -88,19 +96,23 @@ class Base(HttpUser):
 
 
 class Jaeger(Base):
+    """Consultas na API v3 do Jaeger, que devolve os spans no formato OTLP."""
     host = "http://jaeger:16686"
 
     @staticmethod
     def contar(dados):
+        """Traces, spans e identificadores dos traces numa resposta da API v3."""
         spans = [s for r in dados.get("result", {}).get("resourceSpans", [])
                  for e in r["scopeSpans"] for s in e["spans"]]
         ids = sorted({s["traceId"] for s in spans})
         return len(ids), len(spans), ids
 
     def filtro_atributo(self):
+        """Parâmetro da busca por atributo, em JSON, o único formato que a API v3 aceita."""
         return {"query.attributes": json.dumps({"tcc.busca": "alvo"})}
 
     def consultar(self, nome, extras, esperado):
+        """Traces do serviço na última hora, com os filtros extras e o limite de traces."""
         agora = datetime.now(timezone.utc)
         params = {"query.serviceName": SERVICO,
                   "query.startTimeMin": (agora - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -111,38 +123,49 @@ class Jaeger(Base):
             return self.conferir(resposta, self.contar, esperado)
 
     def buscar_identificador(self, nome, identificador):
+        """Um trace pelo identificador, que deve trazer todos os spans dele."""
         with self.client.get(f"/api/v3/traces/{identificador}", name=nome,
                              catch_response=True) as resposta:
             self.conferir(resposta, self.contar, (1, SPANS_POR_TRACE))
 
     def on_start(self):
+        """Antes das repetições, obtém o identificador usado na busca por identificador."""
         self.identificador = preparar(self)
 
 
 class Zipkin(Base):
+    """Consultas na API v2 do Zipkin, que devolve uma lista de traces, cada um uma lista de spans."""
     host = "http://zipkin:9411"
 
     @staticmethod
     def contar(dados):
+        """Traces, spans e identificadores dos traces numa resposta da API v2.
+
+        A busca devolve uma lista de traces, e a busca por identificador, um trace só.
+        """
         traces = dados if dados and isinstance(dados[0], list) else [dados]
         ids = sorted({t[0]["traceId"] for t in traces if t})
         return len(ids), sum(len(t) for t in traces), ids
 
     def filtro_atributo(self):
+        """Parâmetro da busca por atributo, no formato chave=valor do Zipkin."""
         return {"annotationQuery": "tcc.busca=alvo"}
 
     def consultar(self, nome, extras, esperado):
+        """Traces do serviço na última hora, com os filtros extras e o limite de traces."""
         params = {"serviceName": SERVICO, "lookback": 3600000, "limit": LIMITE, **extras}
         with self.client.get("/api/v2/traces", params=params, name=nome,
                              catch_response=True) as resposta:
             return self.conferir(resposta, self.contar, esperado)
 
     def buscar_identificador(self, nome, identificador):
+        """Um trace pelo identificador, que deve trazer todos os spans dele."""
         with self.client.get(f"/api/v2/trace/{identificador}", name=nome,
                              catch_response=True) as resposta:
             self.conferir(resposta, self.contar, (1, SPANS_POR_TRACE))
 
     def on_start(self):
+        """Antes das repetições, obtém o identificador usado na busca por identificador."""
         self.identificador = preparar(self)
 
 

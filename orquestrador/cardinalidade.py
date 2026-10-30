@@ -1,14 +1,16 @@
-"""Cardinalidade: 100 mil, 500 mil ou 1 milhão de séries no par de métricas (seção 4.7).
+"""Cardinalidade: 100 mil, 500 mil ou 1 milhão de séries no par de métricas.
+
+Mede como o número de séries afeta o consumo de CPU e de memória do Prometheus e do
+VictoriaMetrics. A taxa de amostras é a mesma nos três patamares, cerca de 66,7 mil amostras
+por segundo, para que só o número de séries mude entre eles. Com 1 milhão de séries, isso
+equivale a uma amostra por série a cada 15 segundos, o intervalo de coleta mais comum do
+Prometheus. Com menos séries, o intervalo encurta na mesma proporção: 7,5 s com 500 mil e
+1,5 s com 100 mil. Os valores mudam a cada envio, e o número de séries guardadas é conferido
+no backend ao final.
 
 Uso, a partir da pasta orquestrador:
     python cardinalidade.py <prometheus|victoriametrics> --series 100000 [--repeticao 1]
                             [--duracao 720] [--experimento cardinalidade]
-
-A taxa de amostras é a mesma nos três patamares, cerca de 66,7 mil amostras/s, para que só o
-número de séries mude entre eles (A28). Com 1 milhão de séries, isso equivale a uma amostra por
-série a cada 15 segundos, o intervalo de coleta padrão do Prometheus. Com menos séries, o
-intervalo encurta na mesma proporção: 7,5 s com 500 mil e 1,5 s com 100 mil. Os valores mudam
-a cada envio, e o número de séries guardadas é conferido no backend ao final.
 """
 import argparse
 import math
@@ -23,11 +25,16 @@ from medicao import Medicao, subir_cadvisor
 
 PATAMARES = {100_000: "100mil", 500_000: "500mil", 1_000_000: "1milhao"}
 TAXA = 1_000_000 / 15   # amostras por segundo, iguais nos três patamares
-DURACAO = 720
-AQUECIMENTO = 120
+DURACAO = 720       # 12 minutos de carga
+AQUECIMENTO = 120   # 2 minutos descartados
 
 
 def carga_cardinalidade(execucao, series, duracao):
+    """Os avalanche com o número de séries pedido, à taxa fixa, e o resumo da carga.
+
+    As 1000 métricas ficam fixas e o número de séries por métrica muda com o patamar. O
+    intervalo de envio sai do número de séries, para manter a taxa igual nos três.
+    """
     pasta, ferramenta = execucao.pasta, execucao.ferramenta
     series_por_metrica = series // c.METRICAS
     intervalo = round(series * 1000 / TAXA)
@@ -61,6 +68,7 @@ def carga_cardinalidade(execucao, series, duracao):
 
 
 def executar_cardinalidade(ferramenta, series, repeticao, duracao, experimento):
+    """Uma execução completa de cardinalidade com o número de séries pedido."""
     if PARES.get(ferramenta) != "metricas":
         sys.exit("a cardinalidade só se aplica ao Prometheus e ao VictoriaMetrics")
     if series % c.METRICAS:
@@ -76,9 +84,11 @@ def executar_cardinalidade(ferramenta, series, repeticao, duracao, experimento):
     carga_resumo = {}
 
     def carga():
+        """Os geradores com as séries do patamar."""
         carga_resumo.update(carga_cardinalidade(execucao, series, duracao))
 
     def completar(resumo):
+        """Acrescenta ao resumo a carga e a confirmação do número de séries."""
         resumo["carga"] = carga_resumo
         # a contagem do backend confirma o patamar: armazenados é o número de séries
         resumo["series_confirmadas"] = resumo["armazenados"] == series
@@ -100,6 +110,7 @@ def executar_cardinalidade(ferramenta, series, repeticao, duracao, experimento):
 
 
 def main():
+    """Lê os argumentos e roda uma execução de cardinalidade."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("ferramenta", choices=["prometheus", "victoriametrics"])

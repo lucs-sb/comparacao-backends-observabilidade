@@ -1,4 +1,4 @@
-"""Experimento completo em blocos aleatorizados, com retomada (seção 4.8).
+"""Experimento completo em blocos aleatorizados, com retomada.
 
 Uso, a partir da pasta orquestrador:
     python rodar.py [--experimentos ingestao realista ...] [--blocos 1 2 ...] [--horas N]
@@ -7,15 +7,16 @@ Uso, a partir da pasta orquestrador:
 Cada bloco é uma repetição e contém as 40 combinações de experimento, ferramenta e condição,
 em ordem sorteada dentro do bloco. Os 5 blocos somam 200 execuções. A ordem é sorteada uma
 única vez, com semente fixa, e gravada em resultados/plano.json, para que uma retomada siga
-a mesma sequência.
+a mesma sequência. Sortear a ordem dentro de cada bloco espalha as ferramentas ao longo do
+tempo, para que variações de desempenho da nuvem não favoreçam sempre a mesma.
 
 Cada execução roda como um processo separado, chamando o script do experimento. Uma
 execução com resumo.json é considerada concluída e pulada, então basta rodar o comando de
 novo para continuar de onde parou. A pasta de uma execução incompleta, interrompida ou com
 falha, é movida para resultados/_falhas antes de a execução ser refeita, porque alguns
 arquivos são gravados acumulando e misturariam as duas tentativas. Uma execução em que um
-backend esgota a memória também é descartada e refeita (A24), exceto na saturação, em que
-isso acontece no degrau que satura e fica só registrado no resumo.
+backend esgota a memória também é descartada e refeita, exceto na saturação, em que isso
+acontece no degrau que satura e fica só registrado no resumo.
 
 Opções:
     --experimentos  roda só os experimentos indicados, na ordem do plano
@@ -50,21 +51,22 @@ ORQUESTRADOR = Path(__file__).resolve().parent
 BLOCOS = 5
 SEMENTE = 20261030
 TENTATIVAS = 3             # por execução, em cada chamada do rodar.py
-USUARIOS = 50              # cenário realista (P4)
+USUARIOS = 50              # usuários do Locust no cenário realista
 INTERRUPCAO = 120          # segundos para a execução encerrar depois do Ctrl+C simulado
 PAUSA = 60                 # segundos entre uma tentativa com problema e a seguinte
 
 NIVEIS = (25, 50, 75)
 SERIES = {100_000: "100mil", 500_000: "500mil", 1_000_000: "1milhao"}
 
-# Centro dos degraus da saturação, que vão de 50% a 150% deste valor. Elasticsearch, Jaeger
-# e Prometheus vêm do piloto em degraus (A26). Loki e Zipkin ficam no meio das faixas das
-# rampas (A22 e A24). O VictoriaMetrics fica no limite da instância 3 e para no degrau
-# classificado como gerador_limitado, o que dá um limite inferior da capacidade (P5).
+# Centro dos degraus da saturação, que vão de 50% a 150% deste valor, em itens por segundo.
+# Elasticsearch, Jaeger e Prometheus vêm do piloto em degraus. Loki e Zipkin ficam no meio
+# das faixas encontradas nas rampas, para que a saturação caia dentro dos degraus. O
+# VictoriaMetrics fica no limite do que a instância 3 consegue gerar e para no degrau
+# classificado como gerador_limitado, o que dá um limite inferior da capacidade.
 ESTIMATIVAS = {"elasticsearch": 58_500, "loki": 120_000, "jaeger": 16_500,
                "zipkin": 48_000, "prometheus": 638_000, "victoriametrics": 2_100_000}
 
-# Minutos por execução, medidos nos pilotos com o custo fixo de cada uma (P11)
+# Minutos por execução, medidos nos pilotos com o custo fixo de cada uma, para as estimativas
 MINUTOS = {"saturacao": 30, "ingestao": 15.5, "cardinalidade": 12.5, "realista": 17.5,
            "consulta": 2}
 EXPERIMENTOS = list(MINUTOS)
@@ -73,7 +75,7 @@ EXPERIMENTOS = list(MINUTOS)
 # ---------------------------------------------------------------- plano
 
 def combinacoes():
-    """As 40 combinações de um bloco, cada uma com a pasta e o comando que a executa."""
+    """As 40 combinações de experimento, ferramenta e condição que formam um bloco."""
     lista = []
     for f in PARES:
         lista.append({"experimento": "saturacao", "ferramenta": f, "condicao": "degraus"})
@@ -92,6 +94,7 @@ def combinacoes():
 
 
 def criar_plano(semente):
+    """Sorteia a ordem das combinações em cada bloco e devolve o plano com as 200 execuções."""
     sorteio = random.Random(semente)
     execucoes = []
     for bloco in range(1, BLOCOS + 1):
@@ -103,6 +106,7 @@ def criar_plano(semente):
 
 
 def carregar_plano():
+    """Lê o plano.json, ou cria e grava o plano na primeira chamada."""
     if PLANO.exists():
         return json.loads(PLANO.read_text())
     plano = criar_plano(SEMENTE)
@@ -112,15 +116,18 @@ def carregar_plano():
 
 
 def pasta(e):
+    """Pasta de resultados da execução e, a mesma que o script do experimento usa."""
     return (RESULTADOS / e["experimento"] / PARES[e["ferramenta"]] / e["ferramenta"]
             / e["condicao"] / f"rep{e['repeticao']}")
 
 
 def concluida(e):
+    """Se a execução já tem resumo.json, ou seja, se terminou."""
     return (pasta(e) / "resumo.json").exists()
 
 
 def comando(e):
+    """Script e argumentos que rodam a execução e, a partir da pasta orquestrador."""
     f, r, x = e["ferramenta"], str(e["repeticao"]), e["experimento"]
     if x == "saturacao":
         return ["saturacao.py", "degraus", f, "--estimativa", str(ESTIMATIVAS[f]),
@@ -139,6 +146,7 @@ def comando(e):
 
 
 def nome(e):
+    """Identificação curta da execução, para as mensagens."""
     return f"{e['experimento']} {e['ferramenta']} {e['condicao']} rep{e['repeticao']}"
 
 
@@ -148,20 +156,24 @@ class Registro:
     """Mostra na tela e grava no registro da sessão ao mesmo tempo."""
 
     def __init__(self):
+        """Abre um arquivo novo em resultados/_rodar, com a data e a hora no nome."""
         REGISTROS.mkdir(parents=True, exist_ok=True)
         self.arquivo = open(REGISTROS / f"{datetime.now():%Y%m%d-%H%M%S}.log", "a")
 
     def escrever(self, texto):
+        """Escreve o texto como está, sem data, como a saída dos scripts."""
         sys.stdout.write(texto)
         sys.stdout.flush()
         self.arquivo.write(texto)
         self.arquivo.flush()
 
     def linha(self, texto):
+        """Escreve uma linha com data e hora na frente."""
         self.escrever(f"{datetime.now():%d/%m %H:%M:%S} {texto}\n")
 
 
 def historico(e, tentativa, situacao, inicio):
+    """Acrescenta uma linha em historico.jsonl com o resultado de uma tentativa."""
     linha = {"inicio": datetime.fromtimestamp(inicio).isoformat(timespec="seconds"),
              "minutos": round((time.time() - inicio) / 60, 1), "tentativa": tentativa,
              "situacao": situacao, **e}
@@ -189,6 +201,7 @@ def rodar_processo(e, registro):
                                 errors="replace", start_new_session=True)
 
     def copiar_saida():
+        """Repassa ao registro cada linha impressa pelo script, à medida que sai."""
         for linha in processo.stdout:
             registro.escrever("    " + linha)
 
@@ -196,6 +209,7 @@ def rodar_processo(e, registro):
     leitor.start()
 
     def interromper():
+        """Encerra o script com Ctrl+C e, se ele não terminar a tempo, à força."""
         # o Ctrl+C deixa os blocos finally pararem geradores, usuários e a Demo
         os.killpg(processo.pid, signal.SIGINT)
         try:
@@ -246,6 +260,7 @@ def guardar_conteineres(e):
 
 
 def marcar_memoria(e, conteineres):
+    """Registra no resumo.json os contêineres que esgotaram a memória."""
     arquivo = pasta(e) / "resumo.json"
     resumo = json.loads(arquivo.read_text())
     resumo["memoria_esgotada"] = conteineres
@@ -269,7 +284,7 @@ def executar_uma(e, registro):
             continue
         sem_memoria = guardar_conteineres(e)
         if sem_memoria and e["experimento"] == "saturacao":
-            # Na saturação, esgotar a memória é um modo de saturar (A24). Os degraus param no
+            # Na saturação, esgotar a memória é um modo de saturar. Os degraus param no
             # primeiro que não é ok, e a vazão máxima vem do anterior, então a execução vale.
             registro.linha(f"  memória esgotada em {', '.join(sem_memoria)} no degrau final, "
                            f"registrada no resumo")
@@ -293,6 +308,7 @@ def executar_uma(e, registro):
 
 
 def desligar(registro):
+    """Desliga as instâncias 1 e 2 e, um minuto depois, a própria instância 3."""
     registro.linha("desligando as instâncias 1, 2 e 3")
     for host in (HOST_BACKEND, HOST_DEMO):
         subprocess.run(["ssh", f"ubuntu@{host}", "sudo shutdown -h now"], capture_output=True)
@@ -302,6 +318,7 @@ def desligar(registro):
 # ---------------------------------------------------------------- principal
 
 def mostrar_plano(execucoes):
+    """Mostra quantas execuções faltam em cada experimento, o tempo estimado e as próximas."""
     feitas = [e for e in execucoes if concluida(e)]
     faltam = [e for e in execucoes if not concluida(e)]
     print(f"{len(feitas)} de {len(execucoes)} execuções concluídas")
@@ -319,6 +336,7 @@ def mostrar_plano(execucoes):
 
 
 def main():
+    """Lê as opções, filtra o plano e roda as execuções pendentes em ordem."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--experimentos", nargs="+", choices=EXPERIMENTOS)

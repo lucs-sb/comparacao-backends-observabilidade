@@ -1,4 +1,4 @@
-"""Consultas do par de logs no experimento de consulta (seção 4.7, P7).
+"""Consultas do par de logs no experimento de consulta.
 
 Rodado pelo orquestrador num contêiner do Locust, com um único usuário:
     ALVO=loki|elasticsearch SERVICO=svc-007 TERMO=marcadortcc ESPERADO=1000 REPETICOES=30
@@ -38,6 +38,7 @@ aquecimento = Aquecimento()
 
 @events.request.add_listener
 def registrar(name, response_time, response, exception=None, start_time=None, **kwargs):
+    """Chamada pelo Locust a cada requisição: grava o tempo no aquecimento ou nos medidos."""
     linha = [start_time, name, round(response_time, 3),
              getattr(response, "status_code", None), exception or ""]
     if aquecimento.ativo:
@@ -47,10 +48,16 @@ def registrar(name, response_time, response, exception=None, start_time=None, **
 
 
 class Base(HttpUser):
-    abstract = True
+    """Usuário do Locust com a conferência das respostas e a contagem das repetições."""
+    abstract = True   # o Locust não cria usuários desta classe, só das filhas
     repeticoes = 0
 
     def conferir(self, resposta, contar):
+        """Marca a requisição como falha se o status não for 200 ou a quantidade for outra.
+
+        Conferir a quantidade exata garante que o filtro foi aplicado. Se o backend ignorasse
+        o filtro, a resposta traria outro número de registros.
+        """
         if resposta.status_code != 200:
             resposta.failure(f"status {resposta.status_code}")
             return
@@ -59,6 +66,10 @@ class Base(HttpUser):
             resposta.failure(f"{obtido} registros, esperado {ESPERADO}")
 
     def terminar(self):
+        """Fim de uma repetição: avança o aquecimento ou conta uma repetição medida.
+
+        Depois de REPETICOES repetições medidas, fecha o arquivo e encerra o Locust.
+        """
         if aquecimento.ativo:
             aquecimento.fim_repeticao()
             return
@@ -69,9 +80,11 @@ class Base(HttpUser):
 
 
 class Loki(Base):
+    """Consultas LogQL na API do Loki."""
     host = "http://loki:3100"
 
     def consultar(self, nome, logql):
+        """Consulta a última hora, com os registros mais recentes primeiro e sem cache."""
         fim = time.time_ns()
         params = {"query": logql, "limit": LIMITE, "direction": "backward",
                   "start": fim - 3600 * 10**9, "end": fim}
@@ -82,15 +95,23 @@ class Loki(Base):
 
     @task
     def consultas(self):
+        """Uma repetição: filtro por rótulo e busca textual, nessa ordem."""
         self.consultar("filtro_rotulo", f'{{service_name="{SERVICO}"}}')
         self.consultar("busca_textual", f'{{service_name=~"svc-.+"}} |= "{TERMO}"')
         self.terminar()
 
 
 class Elasticsearch(Base):
+    """Consultas na API de busca do Elasticsearch, sobre os data streams de logs."""
     host = "http://elasticsearch:9200"
 
     def consultar(self, nome, *condicoes, filtros=()):
+        """Busca na última hora, mais recentes primeiro e sem o cache de requisições.
+
+        filtros só restringem os documentos, sem calcular relevância, como o filtro por
+        serviço. condicoes participam da busca, como a busca textual. track_total_hits
+        desligado evita contar todos os resultados, o que o Loki também não faz.
+        """
         corpo = {"size": LIMITE, "sort": [{"@timestamp": "desc"}], "track_total_hits": False,
                  "query": {"bool": {
                      "filter": [{"range": {"@timestamp": {"gte": "now-1h"}}}, *filtros],
@@ -101,6 +122,7 @@ class Elasticsearch(Base):
 
     @task
     def consultas(self):
+        """Uma repetição: filtro por rótulo e busca textual, nessa ordem."""
         self.consultar("filtro_rotulo",
                        filtros=[{"term": {"resource.attributes.service.name": SERVICO}}])
         self.consultar("busca_textual", {"match": {"body.text": TERMO}})

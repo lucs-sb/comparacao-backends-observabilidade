@@ -1,13 +1,18 @@
-"""Ingestão: carga constante em 25%, 50% ou 75% de S, a menor vazão máxima do par (seção 4.7).
+"""Ingestão: carga constante em 25%, 50% ou 75% de S, para medir o consumo de recursos.
+
+S é a vazão de referência do par, a menor vazão máxima entre as duas ferramentas. Assim as
+duas recebem exatamente a mesma carga, e nenhuma é levada além do que aguenta. A carga dura
+12 minutos, e os 2 primeiros são descartados como aquecimento no resumo de CPU e memória. O
+resumo diz também se a taxa se sustentou até o fim e a perda entre o enviado e o guardado.
+
+Os geradores e o formato dos itens são os mesmos da saturação, e as métricas usam as mesmas
+100 mil séries. O disco não é medido aqui, só no cenário realista, porque o conteúdo repetido
+dos geradores não representa a compressão de dados reais. Uma execução já concluída é
+pulada, o que permite retomar uma sequência interrompida.
 
 Uso, a partir da pasta orquestrador:
     python ingestao.py <ferramenta> --nivel 75 [--repeticao 1] [--duracao 720]
                                     [--experimento ingestao]
-
-A carga dura 12 minutos, e os 2 primeiros são descartados como aquecimento no resumo de CPU e
-memória. O disco não é medido aqui, só no cenário realista (A27). Os geradores são os mesmos da saturação, com o mesmo formato de itens (A17) e, nas
-métricas, as mesmas 100 mil séries (A25). Uma execução já concluída é pulada, o que permite
-retomar uma sequência interrompida.
 """
 import argparse
 import subprocess
@@ -21,7 +26,7 @@ from config import HOST_CARGA, PARES
 from execucao import FERRAMENTAS, SINAIS, Execucao, executar
 from medicao import Medicao, subir_cadvisor
 
-# S de cada par, medido nos degraus do piloto (A26)
+# S de cada par, a menor vazão máxima medida nos degraus do piloto, em itens por segundo
 S = {"logs": 58500, "traces": 16500, "metricas": 638000}
 NIVEIS = (25, 50, 75)
 DURACAO = 720       # 12 minutos de carga
@@ -40,7 +45,14 @@ def _taxa(amostras, chave, desde):
 
 def resumir_carga(amostras, alvo, inicio, metricas, cpu_instancia, encerrados=0,
                    final_s=FINAL, tolerancia=None):
-    """Taxas depois do aquecimento e no trecho final, e se a carga se sustentou."""
+    """Taxas depois do aquecimento e no trecho final, e se a carga se sustentou.
+
+    amostras são as leituras dos contadores, alvo a taxa pedida e inicio o começo da carga.
+    metricas indica se os contadores são do backend (métricas) ou do Collector (logs e
+    traces). encerrados conta os avalanche que desistiram sozinhos. final_s e tolerancia
+    permitem à cardinalidade, com envios mais espaçados, usar um trecho final maior e uma
+    tolerância própria.
+    """
     tolerancia = tolerancia or c.TOLERANCIA
     aceita, entregue = ("aceitas", "gravadas") if metricas else ("aceitos", "enviados")
     desde = inicio + AQUECIMENTO
@@ -74,7 +86,10 @@ def resumir_carga(amostras, alvo, inicio, metricas, cpu_instancia, encerrados=0,
 
 
 def carga_collector(execucao, taxa, duracao):
-    """Logs e traces: um telemetrygen por serviço, enviando ao Collector."""
+    """Logs e traces: um telemetrygen por serviço, enviando ao Collector.
+
+    Lê os contadores do Collector durante a carga e devolve o resumo dela.
+    """
     pasta, par = execucao.pasta, execucao.par
     sinal = SINAIS[par]
     with open(pasta / "gerador.log", "w") as registro:
@@ -85,6 +100,7 @@ def carga_collector(execucao, taxa, duracao):
         cpu_instancia = c.pct_instancia(instancia_inicio, c.cpu_instancia())
         try:
             for processo in processos:
+                # um minuto de folga depois do fim previsto para os geradores terminarem
                 processo.wait(timeout=max(1, inicio + duracao + 60 - time.time()))
         except subprocess.TimeoutExpired:
             raise RuntimeError("os geradores não terminaram, ver gerador.log")
@@ -92,10 +108,14 @@ def carga_collector(execucao, taxa, duracao):
 
 
 def carga_metricas(execucao, taxa, duracao):
-    """Métricas: os avalanche enviando direto ao backend, com o intervalo que dá a taxa."""
+    """Métricas: os avalanche enviando direto ao backend, com o intervalo que dá a taxa.
+
+    Lê os contadores do backend durante a carga e devolve o resumo dela, com o intervalo de
+    envio usado.
+    """
     pasta, ferramenta = execucao.pasta, execucao.ferramenta
     intervalo = c.intervalo_ms(taxa)
-    alvo = c.SERIES * 1000 / intervalo
+    alvo = c.SERIES * 1000 / intervalo   # a taxa que o intervalo arredondado de fato dá
     c.baixar_avalanche()
     subir_cadvisor(HOST_CARGA)
     with Medicao(pasta / "recursos_gerador.csv", HOST_CARGA), \
@@ -117,7 +137,7 @@ def carga_metricas(execucao, taxa, duracao):
 
 
 def recebidos_loki(backend):
-    """Linhas recebidas pelo distribuidor do Loki, antes da deduplicação (A16)."""
+    """Linhas recebidas pelo distribuidor do Loki, antes da deduplicação."""
     total = 0.0
     texto = requests.get(backend.url + "/metrics", timeout=10).text
     for linha in texto.splitlines():
@@ -127,7 +147,7 @@ def recebidos_loki(backend):
 
 
 def completar_loki(resumo):
-    """Separa a perda real da deduplicação do Loki (A16).
+    """Separa a perda real da deduplicação do Loki.
 
     Perda real é o que o Collector enviou e o Loki não recebeu. Deduplicação é o que o Loki
     recebeu e guardou uma só vez, por serem linhas idênticas no mesmo instante.
@@ -141,6 +161,7 @@ def completar_loki(resumo):
 
 
 def executar_ingestao(ferramenta, nivel, repeticao, duracao, experimento):
+    """Uma execução completa de ingestão no nível pedido, em porcentagem de S."""
     par = PARES[ferramenta]
     taxa = S[par] * nivel / 100
     execucao = Execucao(experimento, par, ferramenta, f"{nivel}pct", repeticao,
@@ -153,16 +174,17 @@ def executar_ingestao(ferramenta, nivel, repeticao, duracao, experimento):
     carga_resumo = {}
 
     def carga():
+        """Os geradores do par, enviando à taxa do nível."""
         if par == "metricas":
             carga_resumo.update(carga_metricas(execucao, taxa, duracao))
         else:
             carga_resumo.update(carga_collector(execucao, taxa, duracao))
 
     def completar(resumo):
+        """Acrescenta ao resumo a carga e, no Loki, a deduplicação."""
         resumo["carga"] = carga_resumo
         if ferramenta == "loki":
             completar_loki(resumo)
-        # O disco não é medido na ingestão, só no cenário realista (A27)
 
     try:
         resumo = executar(execucao, carga, completar=completar)
@@ -170,15 +192,17 @@ def executar_ingestao(ferramenta, nivel, repeticao, duracao, experimento):
         c.remover_geradores()
 
     r = carga_resumo
+    perda = resumo.get("perda_real_pct", resumo.get("perda_pct"))
     print(f"[{ferramenta} {nivel}pct rep{repeticao}] entregue {r['entregue']} de {r['alvo']}/s, "
           f"último minuto {r['entregue_ultimo_minuto']}/s, "
           f"{'sustentada' if r['sustentada'] else 'NÃO sustentada'}, "
-          f"perda {resumo.get('perda_real_pct', resumo.get('perda_pct', 'sem Collector'))}%",
+          f"perda {'sem Collector' if perda is None else f'{perda}%'}",
           flush=True)
     return resumo
 
 
 def main():
+    """Lê os argumentos e roda uma execução de ingestão."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("ferramenta", choices=list(PARES))

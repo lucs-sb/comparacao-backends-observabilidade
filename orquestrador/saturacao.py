@@ -1,17 +1,29 @@
-"""Saturação dos três pares: carga em degraus até o backend não acompanhar.
+"""Saturação: carga em degraus até o backend não acompanhar, para medir a vazão máxima.
+
+A taxa sobe a cada degrau, e cada degrau é classificado pelas taxas medidas no último minuto
+dele. A execução para no primeiro degrau que não for ok, e a vazão máxima é a taxa aceita no
+último degrau ok. Os estados possíveis são:
+
+- ok: o backend acompanhou a taxa pedida;
+- saturado: o backend não acompanhou, por falhas, fila cheia, entrega abaixo do recebido ou
+  respostas lentas que seguraram o gerador;
+- recusado: o Collector recusou dados com o backend em dia;
+- gerador_limitado: a taxa não foi atingida porque a instância 3 chegou ao limite de CPU.
+  Nesse caso, a vazão máxima é só um limite inferior da capacidade do backend.
+
+Em logs e traces, a carga passa pelo Collector e as taxas são lidas nos contadores dele. Em
+métricas, o avalanche envia direto ao backend, e as taxas são lidas nos contadores do próprio
+backend. Nas métricas, os itens são amostras.
 
 Uso, a partir da pasta orquestrador:
-    python saturacao.py rampa <ferramenta> [--inicio 1000] [--degrau 60]
-        Piloto (P1): dobra a taxa a cada degrau, a partir de --inicio itens por segundo.
     python saturacao.py degraus <ferramenta> --estimativa N [--repeticao 1] [--degrau 180]
                                              [--experimento saturacao]
-        Experimento: de 50% a 150% da estimativa, com incremento de 10% (seção 4.7).
-        No piloto, --experimento piloto separa os resultados dos do experimento.
+        Experimento: de 50% a 150% da estimativa, em passos de 10%, com degraus de 3 minutos.
+    python saturacao.py rampa <ferramenta> [--inicio 1000] [--degrau 60]
+        Piloto: dobra a taxa a cada degrau de 1 minuto, a partir de --inicio itens por
+        segundo, para encontrar a estimativa usada nos degraus.
 
 Ferramentas: loki, elasticsearch, jaeger, zipkin, prometheus, victoriametrics.
-Em logs e traces, a carga passa pelo Collector e a saturação é lida nos contadores dele.
-Em métricas, o avalanche envia direto ao backend e a saturação é lida nos contadores do
-próprio backend (A13). Nas métricas, os itens são amostras.
 """
 import argparse
 import csv
@@ -27,15 +39,16 @@ from execucao import SINAIS, Execucao, executar
 from medicao import Medicao, subir_cadvisor
 
 ACOMODACAO = 10     # segundos ignorados no início e no fim de cada degrau
-REGIME = 60         # segundos finais do degrau em que as taxas são medidas (P2)
-LIMITE_GERADOR = 0.9  # fração da CPU da instância 3 a partir da qual o gerador é o limite (P5)
+REGIME = 60         # segundos finais do degrau em que as taxas são medidas
+LIMITE_GERADOR = 0.9  # fração da CPU da instância 3 a partir da qual o gerador é o limite
 
 
 def _regime(amostras):
     """Primeira e última leitura do trecho final do degrau.
 
-    No P2, degraus perto do limite entregaram bem no primeiro minuto e caíram no terceiro.
-    A média do degrau inteiro escondia essa queda, então as taxas usam só o fim.
+    Perto do limite, um backend pode entregar bem no primeiro minuto e cair no terceiro. A
+    média do degrau inteiro esconderia essa queda, então as taxas usam só o último minuto.
+    amostras é a lista de pares (instante, contadores) do degrau.
     """
     final = [a for a in amostras if a[0] >= amostras[-1][0] - REGIME]
     if len(final) < 2:
@@ -44,7 +57,12 @@ def _regime(amostras):
 
 
 def avaliar(amostras, alvo, cpu_instancia=None):
-    """Classifica um degrau pelas leituras do Collector feitas durante ele."""
+    """Classifica um degrau de logs ou traces pelas leituras do Collector feitas durante ele.
+
+    alvo é a taxa pedida e cpu_instancia a CPU da instância 3 no degrau. Falhas e recusas
+    contam no degrau inteiro, e as taxas, só no último minuto. Devolve as taxas, as
+    contagens e o estado do degrau.
+    """
     (_, a), (_, b) = amostras[0], amostras[-1]
     falhas = (b["falhas_envio"] - a["falhas_envio"]) + (b["falhas_fila"] - a["falhas_fila"])
     recusados = b["recusados"] - a["recusados"]
@@ -72,7 +90,7 @@ def avaliar(amostras, alvo, cpu_instancia=None):
         # quando a fila enche, em vez de descartar, e esse bloqueio volta até o gerador,
         # que passa a enviar menos. Só conta como limite do gerador com a instância 3 cheia.
         if cpu_instancia is None or cpu_instancia >= 100 * LIMITE_GERADOR:
-            estado = "gerador_limitado"    # a taxa pedida não foi atingida (P5)
+            estado = "gerador_limitado"    # a instância 3 não produziu a taxa pedida
         else:
             estado = "saturado"            # o backend segurou o Collector, que segurou o gerador
     else:
@@ -88,7 +106,12 @@ def avaliar(amostras, alvo, cpu_instancia=None):
 
 
 def rodar_degraus(par, taxas, duracao, pasta):
-    """Aplica as taxas em sequência e para no primeiro degrau que não for ok."""
+    """Aplica as taxas de logs ou traces em sequência e para no primeiro degrau que não for ok.
+
+    Em cada degrau, os geradores enviam por duracao segundos. As leituras do Collector ignoram
+    os primeiros segundos, em que os geradores ainda estão começando. Cada degrau vira uma
+    linha de degraus.csv, e as leituras ficam em amostras.csv.
+    """
     sinal = SINAIS[par]
     degraus = []
     with open(pasta / "degraus.csv", "w", newline="") as arquivo:
@@ -108,7 +131,7 @@ def rodar_degraus(par, taxas, duracao, pasta):
                 c.registrar_amostra(pasta, numero, *leitura)
                 time.sleep(c.AMOSTRAGEM)
             cpu_instancia = c.pct_instancia(instancia_inicio, c.cpu_instancia())
-            limite = inicio + duracao + 60
+            limite = inicio + duracao + 60   # um minuto de folga para os geradores terminarem
             try:
                 for processo in processos:
                     processo.wait(timeout=max(1, limite - time.time()))
@@ -136,6 +159,7 @@ def rodar_degraus(par, taxas, duracao, pasta):
 
 
 def _concluir(degraus, pasta):
+    """Vazão máxima, estado do degrau de parada e número de degraus, gravados em saturacao.json."""
     validos = [d for d in degraus if d["estado"] == "ok"]
     conclusao = {
         "vazao_maxima": validos[-1]["aceita"] if validos else None,
@@ -147,7 +171,7 @@ def _concluir(degraus, pasta):
     return conclusao
 
 
-# ---------------------------------------------------------------- métricas (A13)
+# ---------------------------------------------------------------- métricas
 
 def avaliar_metricas(amostras, alvo, cpu_gerador, cpu_instancia, encerrados):
     """Classifica um degrau pelas leituras do backend feitas durante ele.
@@ -172,7 +196,7 @@ def avaliar_metricas(amostras, alvo, cpu_gerador, cpu_instancia, encerrados):
         estado = "saturado"            # o backend recusou envios ou não gravou o que recebeu
     elif aceita < c.TOLERANCIA * alvo:
         if gerador_no_limite:
-            estado = "gerador_limitado"    # a instância 3 não produziu a taxa pedida (P5)
+            estado = "gerador_limitado"    # a instância 3 não produziu a taxa pedida
         else:
             estado = "saturado"            # o backend respondeu devagar e segurou o gerador
     else:
@@ -188,7 +212,12 @@ def avaliar_metricas(amostras, alvo, cpu_gerador, cpu_instancia, encerrados):
 
 
 def rodar_degraus_metricas(ferramenta, taxas, duracao, pasta):
-    """Aplica as taxas em sequência e para no primeiro degrau que não for ok."""
+    """Aplica as taxas de métricas em sequência e para no primeiro degrau que não for ok.
+
+    A taxa de cada degrau vira um intervalo de envio do avalanche, com as 100 mil séries
+    fixas. Os geradores são removidos ao fim de cada degrau, e a CPU deles é lida no cAdvisor
+    da instância 3 para separar a saturação do backend do limite do gerador.
+    """
     c.baixar_avalanche()
     degraus = []
     with open(pasta / "degraus.csv", "w", newline="") as arquivo:
@@ -221,7 +250,7 @@ def rodar_degraus_metricas(ferramenta, taxas, duracao, pasta):
                 c.remover_geradores()
                 c.encerrar(processos)
                 registro.close()
-            cpu = None
+            cpu = None   # CPU dos geradores, em porcentagem de um núcleo
             if cpu_inicio[1] is not None and cpu_fim[1] is not None:
                 cpu = (cpu_fim[1] - cpu_inicio[1]) / (cpu_fim[0] - cpu_inicio[0]) * 100
             cpu_instancia = c.pct_instancia(instancia_inicio, instancia_fim)
@@ -245,11 +274,17 @@ def rodar_degraus_metricas(ferramenta, taxas, duracao, pasta):
 
 
 def executar_saturacao(ferramenta, experimento, condicao, repeticao, taxas, duracao):
+    """Uma execução completa de saturação, com os degraus como carga.
+
+    taxas é a lista de taxas dos degraus e duracao o tempo de cada degrau, em segundos. A
+    conclusão vai para o resumo.json e para o saturacao.json, e também é devolvida.
+    """
     par = PARES[ferramenta]
     execucao = Execucao(experimento, par, ferramenta, condicao, repeticao, aquecimento_s=0)
     conclusao = {}
 
     def carga():
+        """Os degraus do par, com a CPU dos geradores medida nas métricas."""
         if par == "metricas":
             # o cAdvisor da instância 3 mede o gerador, que é quem separa saturação de limite
             subir_cadvisor(HOST_CARGA)
@@ -260,7 +295,8 @@ def executar_saturacao(ferramenta, experimento, condicao, repeticao, taxas, dura
             conclusao.update(rodar_degraus(par, taxas, duracao, execucao.pasta))
 
     def completar(resumo):
-        resumo["saturacao"] = conclusao   # a mesma conclusão do saturacao.json
+        """Acrescenta ao resumo a mesma conclusão do saturacao.json."""
+        resumo["saturacao"] = conclusao
 
     try:
         executar(execucao, carga, completar=completar)
@@ -272,6 +308,7 @@ def executar_saturacao(ferramenta, experimento, condicao, repeticao, taxas, dura
 
 
 def main():
+    """Lê os argumentos e roda a rampa do piloto ou os degraus do experimento."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("modo", choices=["rampa", "degraus"])
