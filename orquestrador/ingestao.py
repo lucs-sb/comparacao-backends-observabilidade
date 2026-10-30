@@ -10,15 +10,14 @@ métricas, as mesmas 100 mil séries (A25). Uma execução já concluída é pul
 retomar uma sequência interrompida.
 """
 import argparse
-import json
 import subprocess
 import sys
 import time
 
 import requests
 
-import saturacao as s
-from config import HOST_CARGA
+import carga as c
+from config import HOST_CARGA, PARES
 from execucao import FERRAMENTAS, SINAIS, Execucao, executar
 from medicao import Medicao, subir_cadvisor
 
@@ -39,10 +38,10 @@ def _taxa(amostras, chave, desde):
     return (b[chave] - a[chave]) / (t1 - t0)
 
 
-def _resumir_carga(amostras, alvo, inicio, metricas, cpu_instancia, encerrados=0,
+def resumir_carga(amostras, alvo, inicio, metricas, cpu_instancia, encerrados=0,
                    final_s=FINAL, tolerancia=None):
     """Taxas depois do aquecimento e no trecho final, e se a carga se sustentou."""
-    tolerancia = tolerancia or s.TOLERANCIA
+    tolerancia = tolerancia or c.TOLERANCIA
     aceita, entregue = ("aceitas", "gravadas") if metricas else ("aceitos", "enviados")
     desde = inicio + AQUECIMENTO
     final = amostras[-1][0] - final_s
@@ -74,64 +73,45 @@ def _resumir_carga(amostras, alvo, inicio, metricas, cpu_instancia, encerrados=0
     return resumo
 
 
-def _amostrar(ler, pasta, duracao, inicio):
-    """Lê os contadores a cada 5 segundos até o fim da carga."""
-    amostras = []
-    while time.time() < inicio + duracao:
-        try:
-            leitura = (time.time(), ler())
-        except requests.RequestException:
-            time.sleep(s.AMOSTRAGEM)  # uma leitura perdida não interrompe a execução
-            continue
-        amostras.append(leitura)
-        s._registrar_amostra(pasta, 1, *leitura)
-        time.sleep(s.AMOSTRAGEM)
-    return amostras
-
-
 def carga_collector(execucao, taxa, duracao):
     """Logs e traces: um telemetrygen por serviço, enviando ao Collector."""
     pasta, par = execucao.pasta, execucao.par
     sinal = SINAIS[par]
     with open(pasta / "gerador.log", "w") as registro:
         inicio = time.time()
-        processos = s._iniciar_geradores(par, taxa, duracao, registro)
-        instancia_inicio = s._cpu_instancia()
-        amostras = _amostrar(lambda: s.ler_collector(sinal), pasta, duracao, inicio)
-        cpu_instancia = s._pct_instancia(instancia_inicio, s._cpu_instancia())
+        processos = c.iniciar_telemetrygen(par, taxa, duracao, registro)
+        instancia_inicio = c.cpu_instancia()
+        amostras = c.amostrar(lambda: c.ler_collector(sinal), pasta, duracao, inicio)
+        cpu_instancia = c.pct_instancia(instancia_inicio, c.cpu_instancia())
         try:
             for processo in processos:
                 processo.wait(timeout=max(1, inicio + duracao + 60 - time.time()))
         except subprocess.TimeoutExpired:
             raise RuntimeError("os geradores não terminaram, ver gerador.log")
-    return _resumir_carga(amostras, taxa, inicio, False, cpu_instancia)
+    return resumir_carga(amostras, taxa, inicio, False, cpu_instancia)
 
 
 def carga_metricas(execucao, taxa, duracao):
     """Métricas: os avalanche enviando direto ao backend, com o intervalo que dá a taxa."""
     pasta, ferramenta = execucao.pasta, execucao.ferramenta
-    intervalo = s.intervalo_ms(taxa)
-    alvo = s.SERIES * 1000 / intervalo
-    subprocess.run(["docker", "pull", s.geradores.AVALANCHE], check=True, capture_output=True)
+    intervalo = c.intervalo_ms(taxa)
+    alvo = c.SERIES * 1000 / intervalo
+    c.baixar_avalanche()
     subir_cadvisor(HOST_CARGA)
     with Medicao(pasta / "recursos_gerador.csv", HOST_CARGA), \
             open(pasta / "gerador.log", "w") as registro:
         inicio = time.time()
         processos = []
         try:
-            processos = s._iniciar_avalanche(ferramenta, intervalo, registro)
-            instancia_inicio = s._cpu_instancia()
-            amostras = _amostrar(lambda: s.ler_backend(ferramenta), pasta, duracao, inicio)
-            cpu_instancia = s._pct_instancia(instancia_inicio, s._cpu_instancia())
+            processos = c.iniciar_avalanche(ferramenta, intervalo, registro)
+            instancia_inicio = c.cpu_instancia()
+            amostras = c.amostrar(lambda: c.ler_backend(ferramenta), pasta, duracao, inicio)
+            cpu_instancia = c.pct_instancia(instancia_inicio, c.cpu_instancia())
             encerrados = sum(1 for p in processos if p.poll() is not None)
         finally:
-            s._remover_geradores()
-            for processo in processos:
-                try:
-                    processo.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    processo.kill()
-    resumo = _resumir_carga(amostras, alvo, inicio, True, cpu_instancia, encerrados)
+            c.remover_geradores()
+            c.encerrar(processos)
+    resumo = resumir_carga(amostras, alvo, inicio, True, cpu_instancia, encerrados)
     resumo["intervalo_ms"] = intervalo
     return resumo
 
@@ -146,8 +126,22 @@ def recebidos_loki(backend):
     return round(total)
 
 
+def completar_loki(resumo):
+    """Separa a perda real da deduplicação do Loki (A16).
+
+    Perda real é o que o Collector enviou e o Loki não recebeu. Deduplicação é o que o Loki
+    recebeu e guardou uma só vez, por serem linhas idênticas no mesmo instante.
+    """
+    recebidos = recebidos_loki(FERRAMENTAS["loki"][0]())
+    resumo["recebidos_backend"] = recebidos
+    resumo["deduplicados"] = recebidos - resumo["armazenados"]
+    if resumo.get("enviados"):
+        resumo["perda_real_pct"] = round(
+            100 * (resumo["enviados"] - recebidos) / resumo["enviados"], 3)
+
+
 def executar_ingestao(ferramenta, nivel, repeticao, duracao, experimento):
-    par = s.PARES[ferramenta]
+    par = PARES[ferramenta]
     taxa = S[par] * nivel / 100
     execucao = Execucao(experimento, par, ferramenta, f"{nivel}pct", repeticao,
                         aquecimento_s=AQUECIMENTO)
@@ -164,31 +158,21 @@ def executar_ingestao(ferramenta, nivel, repeticao, duracao, experimento):
         else:
             carga_resumo.update(carga_collector(execucao, taxa, duracao))
 
+    def completar(resumo):
+        resumo["carga"] = carga_resumo
+        if ferramenta == "loki":
+            completar_loki(resumo)
+        # O disco não é medido na ingestão, só no cenário realista (A27)
+
     try:
-        resumo = executar(execucao, carga)
+        resumo = executar(execucao, carga, completar=completar)
     finally:
-        s._remover_geradores()
+        c.remover_geradores()
 
-    # Complementos do resumo, gravados por cima do resumo.json que executar acabou de escrever
-    resumo["carga"] = carga_resumo
-    backend = FERRAMENTAS[ferramenta][0]()
-    if ferramenta == "loki":
-        # perda real: o que o Collector enviou e o Loki não recebeu
-        # deduplicação: o que o Loki recebeu e guardou uma só vez (A16)
-        recebidos = recebidos_loki(backend)
-        resumo["recebidos_backend"] = recebidos
-        resumo["deduplicados"] = recebidos - resumo["armazenados"]
-        if resumo.get("enviados"):
-            resumo["perda_real_pct"] = round(
-                100 * (resumo["enviados"] - recebidos) / resumo["enviados"], 3)
-    # O disco não é medido na ingestão, só no cenário realista (A27)
-    with open(execucao.pasta / "resumo.json", "w") as arquivo:
-        json.dump(resumo, arquivo, indent=2, ensure_ascii=False)
-
-    c = carga_resumo
-    print(f"[{ferramenta} {nivel}pct rep{repeticao}] entregue {c['entregue']} de {c['alvo']}/s, "
-          f"último minuto {c['entregue_ultimo_minuto']}/s, "
-          f"{'sustentada' if c['sustentada'] else 'NÃO sustentada'}, "
+    r = carga_resumo
+    print(f"[{ferramenta} {nivel}pct rep{repeticao}] entregue {r['entregue']} de {r['alvo']}/s, "
+          f"último minuto {r['entregue_ultimo_minuto']}/s, "
+          f"{'sustentada' if r['sustentada'] else 'NÃO sustentada'}, "
           f"perda {resumo.get('perda_real_pct', resumo.get('perda_pct', 'sem Collector'))}%",
           flush=True)
     return resumo
@@ -197,7 +181,7 @@ def executar_ingestao(ferramenta, nivel, repeticao, duracao, experimento):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("ferramenta", choices=list(s.PARES))
+    parser.add_argument("ferramenta", choices=list(PARES))
     parser.add_argument("--nivel", type=int, choices=NIVEIS, required=True)
     parser.add_argument("--repeticao", type=int, default=1)
     parser.add_argument("--duracao", type=int, default=DURACAO)

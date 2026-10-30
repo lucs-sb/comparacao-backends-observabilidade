@@ -16,15 +16,15 @@ para que a carga dure exatamente o tempo da medição.
 import argparse
 import json
 import shlex
-import subprocess
 import sys
 import time
 
 import requests
 
 import collector
-from config import AMBIENTE, HOST_BACKEND, HOST_DEMO, NA_AWS, RAIZ
+from config import AMBIENTE, HOST_BACKEND, HOST_DEMO, NA_AWS, PARES, RAIZ, na_instancia2
 from execucao import FERRAMENTAS, SINAIS, Execucao, executar
+from ingestao import completar_loki
 from medicao import ler, subir_cadvisor
 
 # arquivo de extras do Collector da Demo e exportador do sinal avaliado, por ferramenta
@@ -36,8 +36,6 @@ EXTRAS = {
     "prometheus": ("metricas-prom", "prometheusremotewrite/backend"),
     "victoriametrics": ("metricas-vm", "prometheusremotewrite/backend"),
 }
-PARES = {"loki": "logs", "elasticsearch": "logs", "jaeger": "traces", "zipkin": "traces",
-         "prometheus": "metricas", "victoriametrics": "metricas"}
 LOCUST = f"http://{HOST_DEMO}:8080/loadgen"
 DURACAO = 720
 AQUECIMENTO = 120
@@ -45,20 +43,6 @@ LIMITE_CPU_DEMO = 70   # P4: maior número de usuários com a instância 2 abaix
 
 
 # ---------------------------------------------------------------- Demo na instância 2
-
-def _na_instancia2(comando, verificar=True):
-    """Roda um comando na raiz do repositório da instância 2 (ou local, no MacBook)."""
-    pasta = "~/comparacao-backends-observabilidade" if NA_AWS else str(RAIZ)
-    completo = f"cd {pasta} && {comando}"
-    if NA_AWS:
-        argumentos = ["ssh", f"ubuntu@{HOST_DEMO}", completo]
-    else:
-        argumentos = ["bash", "-c", completo]
-    resultado = subprocess.run(argumentos, capture_output=True, text=True)
-    if verificar and resultado.returncode != 0:
-        raise RuntimeError(f"falhou na instância 2: {comando}\n{resultado.stderr[-2000:]}")
-    return resultado.stdout
-
 
 def _gomemlimit(memoria):
     """80% de um limite como 8g ou 1G, no formato do GOMEMLIMIT."""
@@ -86,7 +70,7 @@ def _comando_compose():
 
 
 def _compose_demo(*args):
-    return _na_instancia2(f"cd demo/opentelemetry-demo && {_comando_compose()} {' '.join(args)}")
+    return na_instancia2(f"cd demo/opentelemetry-demo && {_comando_compose()} {' '.join(args)}")
 
 
 def parar_fontes():
@@ -96,7 +80,7 @@ def parar_fontes():
     e o backend guarda mais itens do que o Collector contou como enviados.
     """
     dc = _comando_compose()
-    _na_instancia2(f"cd demo/opentelemetry-demo && {dc} stop "
+    na_instancia2(f"cd demo/opentelemetry-demo && {dc} stop "
                    f"$({dc} config --services | grep -vx otel-collector)")
     time.sleep(15)
 
@@ -104,7 +88,7 @@ def parar_fontes():
 def preparar_demo(ferramenta):
     """Clona a Demo se faltar e copia o arquivo de extras do par para o Collector dela."""
     extras, _ = EXTRAS[ferramenta]
-    _na_instancia2(
+    na_instancia2(
         "source versoes.env && "
         "{ [ -d demo/opentelemetry-demo ] || git clone -q --depth 1 --branch \"$DEMO_TAG\" "
         "https://github.com/open-telemetry/opentelemetry-demo.git demo/opentelemetry-demo; } && "
@@ -156,7 +140,7 @@ def estatisticas_locust():
 
 
 def _nucleos_instancia2():
-    return int(_na_instancia2("nproc").strip() or 1)
+    return int(na_instancia2("nproc").strip() or 1)
 
 
 def _cpu_memoria_instancia2():
@@ -266,9 +250,20 @@ def executar_realista(ferramenta, usuarios, repeticao, duracao, experimento):
     def depois():
         parar_demo()
 
+    def completar(resumo):
+        resumo["locust"] = locust
+        resumo["telemetria_recebida"] = volumes
+        if ferramenta == "loki":
+            completar_loki(resumo)   # perda real e deduplicação separadas, como na ingestão
+        # disco por item: nas métricas, os itens são os pontos enviados, porque armazenados é
+        # o número de séries; nos outros pares, os itens guardados no backend
+        itens = resumo.get("enviados") if par == "metricas" else resumo.get("armazenados")
+        if itens and "disco_liquido_kib" in resumo:
+            resumo["bytes_por_item"] = round(resumo["disco_liquido_kib"] * 1024 / itens, 2)
+
     try:
         resumo = executar(execucao, carga, antes=antes, depois=depois, exportador=exportador,
-                          fechar=parar_fontes)
+                          fechar=parar_fontes, completar=completar)
     finally:
         try:
             parar_usuarios()
@@ -276,24 +271,6 @@ def executar_realista(ferramenta, usuarios, repeticao, duracao, experimento):
             pass
         parar_demo()
 
-    resumo["locust"] = locust
-    resumo["telemetria_recebida"] = volumes
-    if ferramenta == "loki":
-        # perda real e deduplicação separadas, como na ingestão (A16)
-        from ingestao import recebidos_loki
-        recebidos = recebidos_loki(FERRAMENTAS["loki"][0]())
-        resumo["recebidos_backend"] = recebidos
-        resumo["deduplicados"] = recebidos - resumo["armazenados"]
-        if resumo.get("enviados"):
-            resumo["perda_real_pct"] = round(
-                100 * (resumo["enviados"] - recebidos) / resumo["enviados"], 3)
-    # disco por item: nas métricas, os itens são os pontos enviados, porque armazenados é o
-    # número de séries; nos outros pares, os itens guardados no backend
-    itens = resumo.get("enviados") if par == "metricas" else resumo.get("armazenados")
-    if itens and "disco_liquido_kib" in resumo:
-        resumo["bytes_por_item"] = round(resumo["disco_liquido_kib"] * 1024 / itens, 2)
-    with open(execucao.pasta / "resumo.json", "w") as arquivo:
-        json.dump(resumo, arquivo, indent=2, ensure_ascii=False)
     print(f"[{ferramenta} {usuarios}usuarios rep{repeticao}] enviados {resumo.get('enviados')}, "
           f"armazenados {resumo.get('armazenados')}, perda {resumo.get('perda_pct', '-')}%, "
           f"disco {resumo.get('disco_liquido_kib')} KiB, {resumo.get('bytes_por_item')} bytes "

@@ -26,11 +26,11 @@ from pathlib import Path
 
 import formato
 import geradores
-from config import HOST_DEMO, NA_AWS, RAIZ, VERSOES, docker_em, hosts_extras
+from config import HOST_DEMO, NA_AWS, PARES, RAIZ, VERSOES, docker_em, hosts_extras, na_instancia2
 from execucao import FERRAMENTAS, Execucao, executar
-from realista import _na_instancia2
 
-PARES = {"loki": "logs", "elasticsearch": "logs", "jaeger": "traces", "zipkin": "traces"}
+# o experimento de consulta cobre só os pares de logs e de traces
+CONSULTADAS = {f: p for f, p in PARES.items() if p != "metricas"}
 CONFIG_COLLECTOR = {"loki": "consulta-loki", "elasticsearch": "consulta-es"}
 SERVICOS = 100
 SERVICO = "svc-007"           # o serviço consultado, 1% dos dados
@@ -51,7 +51,7 @@ DADOS = "/home/ubuntu/dados-consulta/logs" if NA_AWS else str(Path.home() / "dad
 
 def garantir_logs():
     """Gera os arquivos fixos de logs na instância 2, se ainda não existirem."""
-    _na_instancia2(
+    na_instancia2(
         f"test -f {DADOS}/pronto || (docker run --rm {geradores.FLOG} -f apache_combined "
         f"-n {LINHAS} -t stdout | python3 scripts/gerar_logs_consulta.py {DADOS} {SERVICOS} {TERMO})")
 
@@ -103,7 +103,7 @@ def esperar(backend, ferramenta, esperado, limite=1800):
 # ---------------------------------------------------------------- consultas
 
 def rodar_locust(pasta, ferramenta):
-    par = PARES[ferramenta]
+    par = CONSULTADAS[ferramenta]
     variaveis = {"ALVO": ferramenta, "SERVICO": SERVICO, "REPETICOES": REPETICOES}
     if par == "logs":
         variaveis.update(TERMO=TERMO, ESPERADO=LIMITE_LOGS)
@@ -141,6 +141,8 @@ def _spearman(valores):
 
 def resumir_tempos(arquivo):
     """Mediana, percentil 95, média, falhas e tendência de cada consulta, em milissegundos."""
+    if not arquivo.exists():
+        return {}
     por = {}
     with open(arquivo) as f:
         for l in csv.DictReader(f):
@@ -166,7 +168,7 @@ def resumir_tempos(arquivo):
 # ---------------------------------------------------------------- execução
 
 def executar_consulta(ferramenta, repeticao, experimento):
-    par = PARES[ferramenta]
+    par = CONSULTADAS[ferramenta]
     execucao = Execucao(experimento, par, ferramenta, "fixo", repeticao, aquecimento_s=0)
     if execucao.concluida:
         print(f"[{ferramenta} fixo rep{repeticao}] já concluída, pulando", flush=True)
@@ -195,31 +197,35 @@ def executar_consulta(ferramenta, repeticao, experimento):
         rodar_locust(execucao.pasta, ferramenta)
         tempos["consultas_s"] = round(time.time() - inicio)
 
-    resumo = executar(execucao, carga, config_collector=CONFIG_COLLECTOR.get(ferramenta))
-    resumo.update(tempos)
-    arquivo = execucao.pasta / "tempos.csv"
-    resumo["consultas"] = resumir_tempos(arquivo) if arquivo.exists() else {}
-    aquecimento = execucao.pasta / "aquecimento.json"
-    if aquecimento.exists():
-        dados = json.loads(aquecimento.read_text())
-        resumo["aquecimento"] = {k: dados[k] for k in ("repeticoes", "incompleto")}
-        print(f"[{ferramenta} fixo rep{repeticao}] aquecimento de {dados['repeticoes']} "
-              f"repetições{', INCOMPLETO' if dados['incompleto'] else ''}", flush=True)
-    with open(execucao.pasta / "resumo.json", "w") as saida:
-        json.dump(resumo, saida, indent=2, ensure_ascii=False)
+    def completar(resumo):
+        resumo.update(tempos)
+        consultas = resumir_tempos(execucao.pasta / "tempos.csv")
+        if not consultas:
+            # sem tempos, a execução não conta como concluída e o rodar.py a refaz
+            raise RuntimeError("o Locust não registrou nenhum tempo, ver locust.log")
+        resumo["consultas"] = consultas
+        aquecimento = execucao.pasta / "aquecimento.json"
+        if aquecimento.exists():
+            dados = json.loads(aquecimento.read_text())
+            resumo["aquecimento"] = {k: dados[k] for k in ("repeticoes", "incompleto")}
+
+    resumo = executar(execucao, carga, config_collector=CONFIG_COLLECTOR.get(ferramenta),
+                      completar=completar)
+    if "aquecimento" in resumo:
+        a = resumo["aquecimento"]
+        print(f"[{ferramenta} fixo rep{repeticao}] aquecimento de {a['repeticoes']} "
+              f"repetições{', INCOMPLETO' if a['incompleto'] else ''}", flush=True)
     for nome, c in resumo["consultas"].items():
         print(f"[{ferramenta} fixo rep{repeticao}] {nome}: {c['repeticoes']} repetições, "
               f"{c['falhas']} falhas, mediana {c['mediana_ms']} ms, p95 {c['p95_ms']} ms, "
               f"variação {c['variacao_pct']}%", flush=True)
-    if not resumo["consultas"]:
-        print(f"[{ferramenta} fixo rep{repeticao}] sem tempos, ver locust.log", flush=True)
     return resumo
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("ferramenta", choices=list(PARES))
+    parser.add_argument("ferramenta", choices=list(CONSULTADAS))
     parser.add_argument("--repeticao", type=int, default=1)
     parser.add_argument("--experimento", default="consulta")
     args = parser.parse_args()

@@ -1,4 +1,2 @@
-requests
-pandas
-scipy
-matplotlib
+# Bibliotecas do orquestrador.
+requests>=2.32,<3

@@ -17,10 +17,7 @@ from backends.loki import Loki
 from backends.prometheus import Prometheus
 from backends.victoriametrics import VictoriaMetrics
 from backends.zipkin import Zipkin
-
-ESPERA_LOTE = 20      # segundos para o Collector esvaziar a fila após o gerador terminar
-INTERVALO_DISCO = 30  # segundos entre medidas de disco (L6)
-LIMITE_DISCO = 300    # segundos de espera máxima pela estabilização do disco
+from execucao import ESPERA_LOTE, TODOS, medir_disco_estavel
 
 # ---------------------------------------------------------------- geradores
 
@@ -63,31 +60,11 @@ CASOS = {
                     avalanche_direto("http://victoriametrics:8428/api/v1/write"), 10000),
 }
 
-TODOS = [Loki, Elasticsearch, Prometheus, VictoriaMetrics, Jaeger, Zipkin]
-
-
 def parar_tudo():
     """Garante estado limpo: nenhum backend de outro caso rodando e todos os volumes apagados."""
     collector.parar()
     for classe in TODOS:
         classe().limpar()
-
-
-def medir_disco_estavel(backend):
-    """Mede o volume a cada INTERVALO_DISCO até duas leituras seguidas coincidirem.
-
-    Alguns backends, como o VictoriaMetrics, fundem partes em segundo plano depois da
-    descarga, então uma única leitura pode pegar o volume no meio dessa reorganização.
-    Devolve as leituras, se estabilizou e o tempo até estabilizar.
-    """
-    leituras = [backend.medir_disco()]
-    inicio = time.time()
-    while time.time() - inicio < LIMITE_DISCO:
-        time.sleep(INTERVALO_DISCO)
-        leituras.append(backend.medir_disco())
-        if leituras[-1] == leituras[-2]:
-            return leituras, True, time.time() - inicio
-    return leituras, False, time.time() - inicio
 
 
 def verificar(nome):

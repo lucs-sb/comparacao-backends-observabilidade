@@ -11,15 +11,13 @@ intervalo encurta na mesma proporção: 7,5 s com 500 mil e 1,5 s com 100 mil. O
 a cada envio, e o número de séries guardadas é conferido no backend ao final.
 """
 import argparse
-import json
 import math
-import subprocess
 import sys
 import time
 
+import carga as c
 import ingestao as ing
-import saturacao as s
-from config import HOST_CARGA
+from config import HOST_CARGA, PARES
 from execucao import Execucao, executar
 from medicao import Medicao, subir_cadvisor
 
@@ -31,46 +29,42 @@ AQUECIMENTO = 120
 
 def carga_cardinalidade(execucao, series, duracao):
     pasta, ferramenta = execucao.pasta, execucao.ferramenta
-    series_por_metrica = series // s.METRICAS
+    series_por_metrica = series // c.METRICAS
     intervalo = round(series * 1000 / TAXA)
     alvo = series * 1000 / intervalo
     valores_s = max(1, math.ceil(intervalo / 1000))  # um valor novo por envio
-    subprocess.run(["docker", "pull", s.geradores.AVALANCHE], check=True, capture_output=True)
+    c.baixar_avalanche()
     subir_cadvisor(HOST_CARGA)
     with Medicao(pasta / "recursos_gerador.csv", HOST_CARGA), \
             open(pasta / "gerador.log", "w") as registro:
         inicio = time.time()
         processos = []
         try:
-            processos = s._iniciar_avalanche(ferramenta, intervalo, registro,
-                                             series_por_metrica=series_por_metrica,
-                                             valores_s=valores_s)
-            instancia_inicio = s._cpu_instancia()
-            amostras = ing._amostrar(lambda: s.ler_backend(ferramenta), pasta, duracao, inicio)
-            cpu_instancia = s._pct_instancia(instancia_inicio, s._cpu_instancia())
+            processos = c.iniciar_avalanche(ferramenta, intervalo, registro,
+                                            series_por_metrica=series_por_metrica,
+                                            valores_s=valores_s)
+            instancia_inicio = c.cpu_instancia()
+            amostras = c.amostrar(lambda: c.ler_backend(ferramenta), pasta, duracao, inicio)
+            cpu_instancia = c.pct_instancia(instancia_inicio, c.cpu_instancia())
             encerrados = sum(1 for p in processos if p.poll() is not None)
         finally:
-            s._remover_geradores()
-            for processo in processos:
-                try:
-                    processo.wait(timeout=60)
-                except subprocess.TimeoutExpired:
-                    processo.kill()
+            c.remover_geradores()
+            c.encerrar(processos, espera=60)
     # Com envios a cada 15 s, um minuto contém só 4 envios, e a taxa lida nele oscila 25%
     # conforme o alinhamento das leituras. O trecho final passa a ter 20 envios, e a
     # tolerância cobre a oscilação de um envio a mais ou a menos.
     final_s = max(ing.FINAL, 20 * intervalo / 1000)
-    resumo = ing._resumir_carga(amostras, alvo, inicio, True, cpu_instancia, encerrados,
+    resumo = ing.resumir_carga(amostras, alvo, inicio, True, cpu_instancia, encerrados,
                                 final_s=final_s, tolerancia=0.9)
     resumo.update({"series": series, "intervalo_ms": intervalo, "valores_s": valores_s})
     return resumo
 
 
 def executar_cardinalidade(ferramenta, series, repeticao, duracao, experimento):
-    if s.PARES.get(ferramenta) != "metricas":
+    if PARES.get(ferramenta) != "metricas":
         sys.exit("a cardinalidade só se aplica ao Prometheus e ao VictoriaMetrics")
-    if series % s.METRICAS:
-        sys.exit(f"o número de séries precisa ser múltiplo de {s.METRICAS}")
+    if series % c.METRICAS:
+        sys.exit(f"o número de séries precisa ser múltiplo de {c.METRICAS}")
     condicao = PATAMARES.get(series, f"{series}series")
     execucao = Execucao(experimento, "metricas", ferramenta, condicao, repeticao,
                         aquecimento_s=AQUECIMENTO)
@@ -84,22 +78,21 @@ def executar_cardinalidade(ferramenta, series, repeticao, duracao, experimento):
     def carga():
         carga_resumo.update(carga_cardinalidade(execucao, series, duracao))
 
+    def completar(resumo):
+        resumo["carga"] = carga_resumo
+        # a contagem do backend confirma o patamar: armazenados é o número de séries
+        resumo["series_confirmadas"] = resumo["armazenados"] == series
+
     try:
-        resumo = executar(execucao, carga)
+        resumo = executar(execucao, carga, completar=completar)
     finally:
-        s._remover_geradores()
+        c.remover_geradores()
 
-    # A contagem do backend confirma o patamar: armazenados é o número de séries (seção 4.7)
-    resumo["carga"] = carga_resumo
-    resumo["series_confirmadas"] = resumo["armazenados"] == series
-    with open(execucao.pasta / "resumo.json", "w") as arquivo:
-        json.dump(resumo, arquivo, indent=2, ensure_ascii=False)
-
-    c = carga_resumo
+    r = carga_resumo
     memoria = sum(v["memoria_max_mib"] for v in resumo["recursos_backend"].values())
     cpu = sum(v["cpu_pct"] or 0 for v in resumo["recursos_backend"].values())
-    print(f"[{ferramenta} {condicao} rep{repeticao}] entregue {c['entregue']} de {c['alvo']}/s, "
-          f"{'sustentada' if c['sustentada'] else 'NÃO sustentada'}, erros {c['erros']}, "
+    print(f"[{ferramenta} {condicao} rep{repeticao}] entregue {r['entregue']} de {r['alvo']}/s, "
+          f"{'sustentada' if r['sustentada'] else 'NÃO sustentada'}, erros {r['erros']}, "
           f"séries guardadas {resumo['armazenados']} "
           f"({'confere' if resumo['series_confirmadas'] else 'NÃO confere'}), "
           f"CPU {round(cpu)}%, memória máxima {round(memoria)} MiB", flush=True)

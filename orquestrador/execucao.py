@@ -20,7 +20,6 @@ from backends.victoriametrics import VictoriaMetrics
 from backends.zipkin import Zipkin
 from config import HOST_BACKEND, HOST_DEMO, NA_AWS, VERSOES
 from medicao import RESULTADOS, Medicao, resumir, subir_cadvisor
-from verificar import ESPERA_LOTE, TODOS, medir_disco_estavel
 
 # ferramenta: (classe, arquivo de par do Collector ou None quando a carga vai direto ao backend)
 FERRAMENTAS = {
@@ -32,6 +31,10 @@ FERRAMENTAS = {
     "victoriametrics": (VictoriaMetrics, None),
 }
 SINAIS = {"logs": "log_records", "traces": "spans", "metricas": "metric_points"}
+TODOS = [Loki, Elasticsearch, Prometheus, VictoriaMetrics, Jaeger, Zipkin]
+ESPERA_LOTE = 20      # segundos para o Collector esvaziar a fila após o gerador terminar
+INTERVALO_DISCO = 30  # segundos entre medidas de disco (L6)
+LIMITE_DISCO = 300    # segundos de espera máxima pela estabilização do disco
 
 
 @dataclass
@@ -71,8 +74,25 @@ def esvaziar_cache():
         )
 
 
+def medir_disco_estavel(backend):
+    """Mede o volume a cada INTERVALO_DISCO até duas leituras seguidas coincidirem.
+
+    Alguns backends, como o VictoriaMetrics, fundem partes em segundo plano depois da
+    descarga, então uma única leitura pode pegar o volume no meio dessa reorganização.
+    Devolve as leituras, se estabilizou e o tempo até estabilizar.
+    """
+    leituras = [backend.medir_disco()]
+    inicio = time.time()
+    while time.time() - inicio < LIMITE_DISCO:
+        time.sleep(INTERVALO_DISCO)
+        leituras.append(backend.medir_disco())
+        if leituras[-1] == leituras[-2]:
+            return leituras, True, time.time() - inicio
+    return leituras, False, time.time() - inicio
+
+
 def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=None,
-             config_collector=None):
+             config_collector=None, completar=None):
     """Executa o roteiro completo. carga é uma função sem argumentos que aplica a carga.
 
     antes roda depois do backend pronto e antes da medição, como a subida da Demo. fechar
@@ -81,7 +101,9 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
     parada da Demo. exportador
     limita a contagem de enviados a um exportador, quando o Collector tem mais de um.
     config_collector troca o arquivo de par do Collector isolado, como no experimento de
-    consulta, que lê arquivos fixos de logs.
+    consulta, que lê arquivos fixos de logs. completar recebe o resumo antes da gravação e
+    acrescenta os dados próprios de cada experimento. Assim o resumo.json, que marca a
+    execução como concluída, só existe quando está completo.
     """
     classe, par_collector = FERRAMENTAS[execucao.ferramenta]
     if config_collector and par_collector:
@@ -169,6 +191,8 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
     if le_collector:
         chave = "recursos_demo" if execucao.demo else "recursos_collector"
         resumo[chave] = resumir(execucao.pasta / arquivo_instancia2, execucao.aquecimento_s)
+    if completar:
+        completar(resumo)
     with open(execucao.pasta / "resumo.json", "w") as arquivo:
         json.dump(resumo, arquivo, indent=2, ensure_ascii=False)
     etapa(f"concluída, resultados em {execucao.pasta}")

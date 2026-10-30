@@ -5,8 +5,6 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.enable-remote-write-receiver
-      - --web.enable-otlp-receiver
-      - --web.enable-admin-api
     mem_limit: ${BACKEND_MEM:-3g}
     ports: ["9090:9090"]
     volumes:

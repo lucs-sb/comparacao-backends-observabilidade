@@ -1,11 +1,15 @@
 """Caminhos do repositório, versões de versoes.env e endereços de ambiente.env."""
 import os
+import subprocess
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 ARQUIVO_VERSOES = RAIZ / "versoes.env"
 ARQUIVO_AMBIENTE = RAIZ / "ambiente.env"
-NOMES_BACKENDS = ["loki", "elasticsearch", "jaeger", "zipkin", "prometheus", "victoriametrics"]
+# ferramenta: par que ela avalia
+PARES = {"loki": "logs", "elasticsearch": "logs", "jaeger": "traces", "zipkin": "traces",
+         "prometheus": "metricas", "victoriametrics": "metricas"}
+NOMES_BACKENDS = list(PARES)
 
 
 def _ler(arquivo):
@@ -56,3 +60,17 @@ def hosts_extras():
     for nome in NOMES_BACKENDS:
         argumentos += ["--add-host", f"{nome}:{HOST_BACKEND}"]
     return argumentos + ["--add-host", f"otelcol:{HOST_DEMO}"]
+
+
+def na_instancia2(comando, verificar=True):
+    """Roda um comando na raiz do repositório da instância 2 (ou local, no MacBook)."""
+    pasta = "~/comparacao-backends-observabilidade" if NA_AWS else str(RAIZ)
+    completo = f"cd {pasta} && {comando}"
+    if NA_AWS:
+        argumentos = ["ssh", f"ubuntu@{HOST_DEMO}", completo]
+    else:
+        argumentos = ["bash", "-c", completo]
+    resultado = subprocess.run(argumentos, capture_output=True, text=True)
+    if verificar and resultado.returncode != 0:
+        raise RuntimeError(f"falhou na instância 2: {comando}\n{resultado.stderr[-2000:]}")
+    return resultado.stdout

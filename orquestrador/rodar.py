@@ -39,7 +39,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from config import HOST_BACKEND, HOST_DEMO, NA_AWS, RAIZ, docker_em
+from config import HOST_BACKEND, HOST_DEMO, NA_AWS, PARES, RAIZ, docker_em
 
 RESULTADOS = RAIZ / "resultados"
 PLANO = RESULTADOS / "plano.json"
@@ -54,8 +54,6 @@ USUARIOS = 50              # cenário realista (P4)
 INTERRUPCAO = 120          # segundos para a execução encerrar depois do Ctrl+C simulado
 PAUSA = 60                 # segundos entre uma tentativa com problema e a seguinte
 
-PARES = {"loki": "logs", "elasticsearch": "logs", "jaeger": "traces", "zipkin": "traces",
-         "prometheus": "metricas", "victoriametrics": "metricas"}
 NIVEIS = (25, 50, 75)
 SERIES = {100_000: "100mil", 500_000: "500mil", 1_000_000: "1milhao"}
 
