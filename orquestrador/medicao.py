@@ -1,5 +1,10 @@
 """CPU e memória dos contêineres, lidos do cAdvisor a cada segundo.
 
+O cAdvisor roda em cada instância e expõe, no formato do Prometheus, o tempo de CPU acumulado
+e a memória de cada contêiner. A classe Medicao lê esses valores a cada segundo, numa thread
+separada, e grava um CSV durante a carga. A função resumir transforma o CSV em CPU média e
+memória mediana e máxima de cada contêiner.
+
 Uso, a partir da pasta orquestrador, para testar a coleta com o Loki:
     python medicao.py teste
 """
@@ -20,11 +25,12 @@ METRICAS = {
     "container_memory_working_set_bytes": "memoria_bytes",  # memória em uso, sem o cache liberável
 }
 NOME = re.compile(r'name="([^"]+)"')
-IGNORADOS = {"cadvisor"}
+IGNORADOS = {"cadvisor"}   # o próprio cAdvisor fica fora das medidas
 PORTA = 8089  # porta do cAdvisor no host; a 8080 fica livre para a Demo
 
 
 def _compose(host, *args):
+    """Roda docker compose na pasta do cAdvisor, na instância indicada."""
     subprocess.run(
         ["docker", "compose", "--env-file", str(ARQUIVO_VERSOES), *arquivos_compose(PASTA), *args],
         cwd=PASTA, env=docker_em(host), check=True, capture_output=True,
@@ -32,7 +38,10 @@ def _compose(host, *args):
 
 
 def subir_cadvisor(host=HOST_BACKEND, espera=60):
-    """Sobe o cAdvisor, se ainda não estiver no ar, e espera ele responder."""
+    """Sobe o cAdvisor na instância, se ainda não estiver no ar, e espera ele responder.
+
+    O cAdvisor continua rodando entre as execuções, então só a primeira chamada o cria.
+    """
     _compose(host, "up", "-d")
     limite = time.time() + espera
     while time.time() < limite:
@@ -46,12 +55,16 @@ def subir_cadvisor(host=HOST_BACKEND, espera=60):
 
 
 def ler(host=HOST_BACKEND):
-    """Uma leitura de todos os contêineres: {nome: {"cpu_s": ..., "memoria_bytes": ...}}."""
+    """Uma leitura de todos os contêineres: {nome: {"cpu_s": ..., "memoria_bytes": ...}}.
+
+    Cada linha do texto do cAdvisor tem o nome da métrica, os rótulos entre chaves e o valor,
+    como container_memory_working_set_bytes{name="loki",...} 123456 1700000000000.
+    """
     texto = requests.get(f"http://{host}:{PORTA}/metrics", timeout=5).text
     valores = {}
     for linha in texto.splitlines():
         if linha.startswith("#"):
-            continue
+            continue  # linhas de ajuda e de tipo
         metrica = linha.split("{", 1)[0]
         if metrica not in METRICAS:
             continue
@@ -60,6 +73,7 @@ def ler(host=HOST_BACKEND):
         nome = NOME.search(linha)
         if not nome or nome.group(1) in IGNORADOS:
             continue
+        # depois dos rótulos vêm o valor e o instante, e só o valor interessa
         valor = float(linha.rsplit("}", 1)[1].split()[0])
         valores.setdefault(nome.group(1), {})[METRICAS[metrica]] = valor
     return valores
@@ -73,6 +87,7 @@ class Medicao:
     """
 
     def __init__(self, arquivo, host=HOST_BACKEND, intervalo=1.0):
+        """arquivo é o CSV de saída, host a instância medida e intervalo o tempo entre leituras."""
         self.arquivo = arquivo
         self.host = host
         self.intervalo = intervalo
@@ -81,17 +96,22 @@ class Medicao:
         self._thread = threading.Thread(target=self._executar, daemon=True)
 
     def __enter__(self):
+        """Começa as leituras em segundo plano."""
         self._thread.start()
         return self
 
     def __exit__(self, *erro):
+        """Para as leituras e espera a última linha ser gravada."""
         self._parar.set()
         self._thread.join()
 
     def _executar(self):
+        """Laço da thread: lê o cAdvisor e grava uma linha por contêiner a cada intervalo."""
         with open(self.arquivo, "w", newline="") as arquivo:
             saida = csv.writer(arquivo)
             saida.writerow(["instante", "conteiner", "cpu_s", "memoria_bytes"])
+            # o próximo instante é contado a partir do início, e não do fim da leitura
+            # anterior, para que o atraso de uma leitura não se acumule nas seguintes
             proximo = time.monotonic()
             while not self._parar.is_set():
                 instante = round(time.time(), 3)
@@ -106,7 +126,12 @@ class Medicao:
 
 
 def resumir(arquivo, descarte=0.0):
-    """CPU média e memória por contêiner, descartando os primeiros segundos."""
+    """CPU média e memória por contêiner, descartando os primeiros segundos.
+
+    descarte é o aquecimento, em segundos a partir da primeira leitura. A CPU sai em
+    porcentagem de um núcleo, então 250% equivalem a dois núcleos e meio ocupados. A memória
+    sai em MiB, como mediana e máximo das leituras.
+    """
     with open(arquivo) as f:
         linhas = list(csv.DictReader(f))
     if not linhas:
@@ -123,7 +148,7 @@ def resumir(arquivo, descarte=0.0):
         if t1 > t0:
             # o contador acumulado dividido pelo tempo dá a média exata, mesmo com leituras repetidas
             cpu = (float(ls[-1]["cpu_s"]) - float(ls[0]["cpu_s"])) / (t1 - t0) * 100
-        memoria = sorted(float(l["memoria_bytes"]) for l in ls)
+        memoria = sorted(float(l["memoria_bytes"]) for l in ls)   # ordenada para a mediana
         resumo[conteiner] = {
             "amostras": len(ls),
             "duracao_s": round(t1 - t0, 1),

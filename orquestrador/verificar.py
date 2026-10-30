@@ -1,4 +1,10 @@
-"""Verificações locais L1, L2 e L5 a L7.
+"""Verificação do ambiente: cada backend recebe uma carga pequena e conhecida.
+
+Antes dos experimentos, confirma que cada backend sobe, recebe os dados pelo caminho usado no
+experimento, guarda exatamente o que foi enviado e tem o disco estável depois da descarga.
+Os logs e traces passam pelo Collector isolado, e as métricas vão do avalanche direto ao
+backend. Cada caso imprime os critérios, se passou, e deixa os dados no backend para
+inspeção.
 
 Uso, a partir da pasta orquestrador:
     python verificar.py --lista        lista os casos
@@ -22,23 +28,26 @@ from execucao import ESPERA_LOTE, TODOS, medir_disco_estavel
 # ---------------------------------------------------------------- geradores
 
 def gerar_logs():
+    """1000 logs, a 100 por segundo."""
     geradores.telemetrygen("logs", "--logs", "1000", "--rate", "100",
                            "--body", "teste tcc", "--service", "tcc-teste")
 
 
 def gerar_traces():
-    # 100 traces com 1 span pai e 5 filhos cada, ou seja, 600 spans
+    """100 traces com 1 span pai e 5 filhos cada, ou seja, 600 spans."""
     geradores.telemetrygen("traces", "--traces", "100", "--child-spans", "5", "--rate", "10",
                            "--service", "tcc-teste",
                            "--telemetry-attributes", 'tcc.busca="alvo"')
 
 
-# 100 métricas com 100 séries cada, ou seja, 10 mil séries, sem troca de séries (L5)
+# 100 métricas com 100 séries cada, ou seja, 10 mil séries. Os intervalos zerados impedem o
+# avalanche de trocar as séries durante a execução, o que mudaria o total esperado.
 SERIES = ["--gauge-metric-count=100", "--series-count=100",
           "--series-interval=0", "--metric-interval=0", "--value-interval=15"]
 
 
 def avalanche_direto(url):
+    """Gerador de métricas que envia direto ao backend no endereço dado."""
     def gerar():
         # 20 envios a cada 15 s, ou seja, 5 minutos
         geradores.avalanche(*SERIES, f"--remote-url={url}",
@@ -47,7 +56,8 @@ def avalanche_direto(url):
 
 
 # ---------------------------------------------------------------- casos
-# nome: (backend, arquivo de par do Collector ou None, sinal do Collector, gerador, esperado)
+# nome: (backend, arquivo de par do Collector ou None, sinal do Collector, gerador,
+#        itens esperados no backend)
 
 CASOS = {
     "logs-loki": (Loki, "logs-loki", "log_records", gerar_logs, 1000),
@@ -60,6 +70,7 @@ CASOS = {
                     avalanche_direto("http://victoriametrics:8428/api/v1/write"), 10000),
 }
 
+
 def parar_tudo():
     """Garante estado limpo: nenhum backend de outro caso rodando e todos os volumes apagados."""
     collector.parar()
@@ -68,6 +79,7 @@ def parar_tudo():
 
 
 def verificar(nome):
+    """Roda um caso e devolve True se todos os critérios passaram."""
     classe, par, sinal, gerar, esperado = CASOS[nome]
     backend = classe()
 
@@ -86,7 +98,7 @@ def verificar(nome):
     time.sleep(ESPERA_LOTE)
 
     # Lê as contagens do Collector e o desliga antes de medir, para que nada mais
-    # chegue ao backend durante a descarga e as medidas de disco (L6).
+    # chegue ao backend durante a descarga e as medidas de disco.
     enviado = collector.enviados(sinal) if par else None
     falhas = (collector.falhas(sinal) or 0) if par else None
     if par:
@@ -101,7 +113,7 @@ def verificar(nome):
     # comparam enviado com esperado.
     criterios = {
         "armazenado igual ao esperado": armazenado == esperado,
-        f"disco estável em {espera_disco:.0f} s (L6)": estavel,
+        f"disco estável em {espera_disco:.0f} s": estavel,
     }
     if par:
         criterios["sem falhas no Collector"] = falhas == 0
@@ -119,6 +131,7 @@ def verificar(nome):
 
 
 def main():
+    """Lê os argumentos e roda um caso, lista os casos ou limpa o ambiente."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("caso", nargs="?", help="nome do caso ou 'parar'")

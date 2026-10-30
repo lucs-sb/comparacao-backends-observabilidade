@@ -1,4 +1,13 @@
-"""Geração de carga e leitura de contadores, comuns à saturação, à ingestão e à cardinalidade."""
+"""Geração de carga e leitura de contadores, comuns à saturação, à ingestão e à cardinalidade.
+
+Nos pares de logs e de traces, um telemetrygen por serviço envia ao Collector, e a taxa
+entregue é lida nos contadores do Collector. No par de métricas, vários avalanche enviam
+direto ao backend por escrita remota, e a taxa é lida nos contadores do próprio backend.
+
+Os geradores rodam em segundo plano, como contêineres da instância 3, e são removidos pelo
+nome ao fim de cada carga. As leituras de CPU da instância 3 mostram se foi o gerador, e não
+o backend, que deixou de acompanhar a taxa pedida.
+"""
 import csv
 import subprocess
 import sys
@@ -22,7 +31,12 @@ AVALANCHE = "tcc-avalanche"
 # ---------------------------------------------------------------- logs e traces
 
 def ler_collector(sinal):
-    """Contadores e fila do Collector, somados entre receptores e exportadores."""
+    """Contadores e fila do Collector, somados entre receptores e exportadores.
+
+    Devolve aceitos e recusados pelos receptores, enviados e falhas dos exportadores, falhas
+    por fila cheia e a ocupação e a capacidade da fila. Os contadores são acumulados desde a
+    subida do Collector, então a taxa sai da diferença entre duas leituras.
+    """
     nomes = {
         "aceitos": f"otelcol_receiver_accepted_{sinal}",
         "recusados": f"otelcol_receiver_refused_{sinal}",
@@ -43,6 +57,7 @@ def ler_collector(sinal):
 
 
 def _nomes_telemetrygen():
+    """Nomes dos contêineres do telemetrygen, um por serviço."""
     return [f"{CONTEINER}-{i}" for i in range(1, len(formato.SERVICOS) + 1)]
 
 
@@ -67,7 +82,10 @@ def iniciar_telemetrygen(par, taxa, duracao, registro):
 
 
 def remover_geradores():
-    # os nomes do avalanche vão até 20, para pegar sobras de uma execução com mais geradores
+    """Remove todos os contêineres de gerador desta máquina, rodando ou não.
+
+    Os nomes do avalanche vão até 20, para pegar sobras de uma execução com mais geradores.
+    """
     avalanche = [f"{AVALANCHE}-{i}" for i in range(1, 21)]
     subprocess.run(["docker", "rm", "-f", *_nomes_telemetrygen(), *avalanche],
                    capture_output=True)
@@ -99,6 +117,7 @@ CONTADORES = {
 
 
 def configurar_geradores(n):
+    """Muda o número de contêineres do avalanche, que precisa dividir as 1000 métricas."""
     global GERADORES_METRICAS, METRICAS_POR_GERADOR
     if METRICAS % n:
         sys.exit(f"--geradores precisa dividir {METRICAS}")
@@ -107,15 +126,22 @@ def configurar_geradores(n):
 
 
 def _nomes_avalanche():
+    """Nomes dos contêineres do avalanche, um por gerador."""
     return [f"{AVALANCHE}-{i}" for i in range(1, GERADORES_METRICAS + 1)]
 
 
 def intervalo_ms(taxa):
-    """Intervalo de envio que dá a taxa pedida com o número de séries fixo."""
+    """Intervalo de envio, em milissegundos, que dá a taxa pedida com o número de séries fixo.
+
+    Cada envio leva uma amostra de cada série, então a taxa em amostras por segundo é o
+    número de séries dividido pelo intervalo. O arredondamento faz a taxa real diferir um
+    pouco da pedida, e por isso os experimentos recalculam o alvo a partir do intervalo.
+    """
     return max(1, round(SERIES * 1000 / taxa))
 
 
 def _erro_de_escrita(ferramenta, linha):
+    """Se a linha do /metrics conta requisições de escrita remota que terminaram em erro."""
     if ferramenta == "prometheus":
         return (linha.startswith("prometheus_http_requests_total{")
                 and 'handler="/api/v1/write"' in linha and 'code="2' not in linha)
@@ -123,14 +149,18 @@ def _erro_de_escrita(ferramenta, linha):
 
 
 def ler_backend(ferramenta):
-    """Amostras aceitas e gravadas e erros de escrita, lidos no /metrics do backend."""
+    """Amostras aceitas e gravadas e erros de escrita, lidos no /metrics do backend.
+
+    Os prefixos de cada contador estão em CONTADORES. No VictoriaMetrics, esperas conta as
+    requisições que aguardaram vaga para inserir, um sinal de que ele está perto do limite.
+    """
     url = FERRAMENTAS[ferramenta][0]().url + "/metrics"
     valores = {"aceitas": 0.0, "gravadas": 0.0, "erros": 0.0, "esperas": 0.0}
     for linha in requests.get(url, timeout=5).text.splitlines():
         if not linha or linha.startswith("#"):
             continue
         try:
-            valor = float(linha.rsplit(" ", 1)[1])
+            valor = float(linha.rsplit(" ", 1)[1])   # o valor vem depois do último espaço
         except (IndexError, ValueError):
             continue
         for chave, prefixos in CONTADORES[ferramenta].items():
@@ -158,9 +188,11 @@ def baixar_avalanche():
 def iniciar_avalanche(ferramenta, intervalo, registro, series_por_metrica=None, valores_s=1):
     """Os avalanche em segundo plano, enviando sem fim até serem removidos.
 
-    A ordem fora do tempo vem ligada por padrão e mandaria amostras com até 5 minutos de
-    atraso, que o Prometheus recusa. Os valores mudam a cada valores_s segundos, por padrão a
-    cada segundo, como numa coleta real. A cardinalidade troca as séries por métrica.
+    Cada gerador cria METRICAS_POR_GERADOR métricas com series_por_metrica séries cada e envia
+    todas a cada intervalo, em milissegundos. A cardinalidade muda series_por_metrica para
+    variar o total de séries. Os valores mudam a cada valores_s segundos, como numa coleta
+    real. A ordem fora do tempo vem ligada por padrão e mandaria amostras com até 5 minutos
+    de atraso, que o Prometheus recusa, então ela é desligada. Devolve os processos.
     """
     series_por_metrica = series_por_metrica or SERIES_POR_METRICA
     remover_geradores()
@@ -172,10 +204,10 @@ def iniciar_avalanche(ferramenta, intervalo, registro, series_por_metrica=None, 
              f"--gauge-metric-count={METRICAS_POR_GERADOR}",
              f"--series-count={series_por_metrica}",
              "--series-interval=0", "--metric-interval=0", f"--value-interval={valores_s}",
-             f"--const-label=gerador={i}",
+             f"--const-label=gerador={i}",           # separa as séries de cada gerador
              f"--remote-url=http://{ferramenta}:{PORTAS[ferramenta]}/api/v1/write",
              f"--remote-write-interval={intervalo}ms",
-             "--remote-requests-count=-1",
+             "--remote-requests-count=-1",           # envia até ser removido
              "--no-remote-out-of-order"],
             stdout=registro, stderr=subprocess.STDOUT,
         ))
@@ -194,7 +226,11 @@ def encerrar(processos, espera=30):
 # ---------------------------------------------------------------- instância 3 e amostras
 
 def cpu_instancia():
-    """Tempo ocupado e total de todos os núcleos desta máquina, lidos em /proc/stat."""
+    """Tempo ocupado e total de todos os núcleos desta máquina, lidos em /proc/stat.
+
+    A primeira linha do /proc/stat soma todos os núcleos, em unidades de tempo, separados por
+    estado. Ocioso é a soma dos estados idle e iowait, e o resto conta como ocupado.
+    """
     try:
         with open("/proc/stat") as f:
             campos = [int(x) for x in f.readline().split()[1:]]
@@ -223,7 +259,12 @@ def registrar_amostra(pasta, degrau, instante, valores):
 
 
 def amostrar(leitor, pasta, duracao, inicio):
-    """Lê os contadores a cada AMOSTRAGEM segundos até o fim da carga."""
+    """Lê os contadores a cada AMOSTRAGEM segundos até o fim da carga.
+
+    leitor é uma função sem argumentos que devolve um dicionário de contadores, como
+    ler_collector ou ler_backend. Devolve a lista de pares (instante, contadores) e grava
+    cada leitura em amostras.csv.
+    """
     amostras = []
     while time.time() < inicio + duracao:
         try:

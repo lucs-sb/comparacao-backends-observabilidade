@@ -1,6 +1,21 @@
-"""Roteiro de uma execução, nos seis passos da seção 4.7.
+"""Roteiro comum a todas as execuções dos experimentos.
 
-Uso, a partir da pasta orquestrador, para testar com uma ingestão curta no Loki:
+Toda execução segue os mesmos seis passos, na função executar:
+
+1. limpeza: remove o Collector e todos os backends, com os volumes, e esvazia o cache de
+   disco das instâncias;
+2. inicialização: sobe o cAdvisor, o backend avaliado e, quando há, o Collector;
+3. carga: aplica a carga do experimento enquanto mede CPU e memória a cada segundo;
+4. registro: lê no Collector quantos itens foram enviados;
+5. descarga: força o backend a gravar os dados, conta o que ficou armazenado e, no cenário
+   realista, mede o disco;
+6. exportação: resume CPU e memória e grava o resumo.json na pasta da execução.
+
+Cada experimento só define a carga e o que acrescentar ao resumo. A pasta da execução é
+resultados/<experimento>/<par>/<ferramenta>/<condição>/rep<n>, e o resumo.json, gravado por
+último, marca a execução como concluída.
+
+Uso, a partir da pasta orquestrador, para testar o ambiente com uma ingestão curta no Loki:
     python execucao.py teste
 """
 import json
@@ -21,7 +36,8 @@ from backends.zipkin import Zipkin
 from config import HOST_BACKEND, HOST_DEMO, NA_AWS, VERSOES
 from medicao import RESULTADOS, Medicao, resumir, subir_cadvisor
 
-# ferramenta: (classe, arquivo de par do Collector ou None quando a carga vai direto ao backend)
+# ferramenta: (classe que controla o backend, arquivo de par do Collector isolado). Nas métricas
+# não há arquivo, porque o avalanche envia direto ao backend, sem passar pelo Collector.
 FERRAMENTAS = {
     "loki": (Loki, "logs-loki"),
     "elasticsearch": (Elasticsearch, "logs-es"),
@@ -30,15 +46,16 @@ FERRAMENTAS = {
     "prometheus": (Prometheus, None),
     "victoriametrics": (VictoriaMetrics, None),
 }
-SINAIS = {"logs": "log_records", "traces": "spans", "metricas": "metric_points"}
-TODOS = [Loki, Elasticsearch, Prometheus, VictoriaMetrics, Jaeger, Zipkin]
+SINAIS = {"logs": "log_records", "traces": "spans", "metricas": "metric_points"}  # nomes no Collector
+TODOS = [Loki, Elasticsearch, Prometheus, VictoriaMetrics, Jaeger, Zipkin]  # removidos na limpeza
 ESPERA_LOTE = 20      # segundos para o Collector esvaziar a fila após o gerador terminar
-INTERVALO_DISCO = 30  # segundos entre medidas de disco (L6)
+INTERVALO_DISCO = 30  # segundos entre medidas de disco
 LIMITE_DISCO = 300    # segundos de espera máxima pela estabilização do disco
 
 
 @dataclass
 class Execucao:
+    """Identifica uma execução e define a pasta dos resultados dela."""
     experimento: str        # saturacao, ingestao, realista, consulta ou cardinalidade
     par: str                # logs, traces ou metricas
     ferramenta: str         # chave de FERRAMENTAS
@@ -46,7 +63,7 @@ class Execucao:
     repeticao: int
     aquecimento_s: int = 120  # descartado no resumo de CPU e memória
     # O disco só é medido no cenário realista. Nos sintéticos, o conteúdo repetido dos
-    # geradores não representa a compressão de dados reais (A27).
+    # geradores não representa a compressão de dados reais.
     medir_disco: bool = False
     # No cenário realista, a carga vem da Demo e passa pelo Collector dela, na instância 2,
     # em vez do Collector isolado. O consumo da instância 2 inclui então a Demo inteira.
@@ -54,17 +71,23 @@ class Execucao:
 
     @property
     def pasta(self):
+        """resultados/<experimento>/<par>/<ferramenta>/<condição>/rep<n>."""
         return (RESULTADOS / self.experimento / self.par / self.ferramenta
                 / self.condicao / f"rep{self.repeticao}")
 
     @property
     def concluida(self):
+        """Se a execução já terminou, o que permite pular execuções ao retomar."""
         # o resumo é gravado por último, então só existe se a execução terminou
         return (self.pasta / "resumo.json").exists()
 
 
 def esvaziar_cache():
-    """Esvazia o cache de disco das instâncias 1 e 2. No MacBook, não faz nada."""
+    """Esvazia o cache de disco das instâncias 1 e 2. No MacBook, não faz nada.
+
+    Sem isso, os dados de uma execução anterior que ficaram na memória do sistema poderiam
+    acelerar a seguinte. O sync grava o que está pendente, e o drop_caches libera o cache.
+    """
     if not NA_AWS:
         return
     for host in (HOST_BACKEND, HOST_DEMO):
@@ -103,8 +126,9 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
     config_collector troca o arquivo de par do Collector isolado, como no experimento de
     consulta, que lê arquivos fixos de logs. completar recebe o resumo antes da gravação e
     acrescenta os dados próprios de cada experimento. Assim o resumo.json, que marca a
-    execução como concluída, só existe quando está completo.
+    execução como concluída, só existe quando está completo. Devolve o resumo gravado.
     """
+    # quais instâncias são medidas depende de onde a carga passa
     classe, par_collector = FERRAMENTAS[execucao.ferramenta]
     if config_collector and par_collector:
         par_collector = config_collector
@@ -116,6 +140,7 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
     resumo = {"execucao": asdict(execucao), "versoes": VERSOES}
 
     def etapa(texto):
+        """Mostra o andamento com a identificação da execução."""
         print(f"[{execucao.ferramenta} {execucao.condicao} rep{execucao.repeticao}] {texto}", flush=True)
 
     # 1. Limpeza do ambiente
@@ -125,7 +150,8 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
         classe_backend().limpar()
     esvaziar_cache()
 
-    # 2. Inicialização, com o volume vazio medido para ser descontado depois (A2)
+    # 2. Inicialização. O volume do backend vazio já ocupa espaço, com índices e arquivos de
+    # controle, e essa medida é descontada do disco final.
     etapa("subindo cAdvisor e backend")
     subir_cadvisor(HOST_BACKEND)
     if le_collector:
@@ -153,7 +179,8 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
     if fechar:
         fechar()
 
-    # 4. Registro do que foi enviado, antes de parar o Collector
+    # 4. Registro do que foi enviado. O Collector é parado depois da leitura, para que nada
+    # mais chegue ao backend durante a descarga e a contagem.
     if le_collector:
         sinal = SINAIS[execucao.par]
         resumo["enviados"] = collector.enviados(sinal, exportador)
@@ -175,14 +202,14 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
         resumo["perda_pct"] = round(100 * perda / resumo["enviados"], 3)
     if execucao.medir_disco:
         inicio_acomodacao = time.time()
-        backend.acomodar()
+        backend.acomodar()   # o Elasticsearch espera as fusões de segmentos terminarem
         resumo["espera_acomodacao_s"] = round(time.time() - inicio_acomodacao)
         leituras, estavel, espera = medir_disco_estavel(backend)
         resumo["disco_final_kib"] = leituras[-1]
         resumo["disco_liquido_kib"] = leituras[-1] - resumo["disco_vazio_kib"]
         resumo["disco_estavel"] = estavel
         resumo["espera_disco_s"] = round(espera)
-        # o disco por pasta separa, por exemplo, o WAL dos dados já compactados (A31)
+        # o disco por pasta separa, por exemplo, o WAL dos dados já compactados
         resumo["disco_por_pasta_kib"] = backend.medir_pastas()
 
     # 6. Exportação: os CSV brutos já estão na pasta, e o resumo marca a execução como concluída

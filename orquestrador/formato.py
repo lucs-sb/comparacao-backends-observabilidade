@@ -1,14 +1,16 @@
-"""Formato dos itens sintéticos, medido na OpenTelemetry Demo 3.1.0 (P6, A17).
+"""Formato dos logs e traces sintéticos, copiado do que a OpenTelemetry Demo 3.1.0 gera.
 
 Na Demo, o corpo dos logs tem em média 207 bytes, os logs têm 7 atributos, os spans têm 8,
 os recursos têm 17 atributos e os traces têm em média 5,1 spans. Os geradores reproduzem
-esses valores e dividem a carga entre 8 serviços, como uma aplicação de microsserviços.
+esses valores e dividem a carga entre 8 serviços, como uma aplicação de microsserviços. Assim
+os itens sintéticos têm o tamanho e a estrutura de dados reais, mesmo com conteúdo repetido.
+A medição que deu esses números está em scripts/piloto/formato.
 """
 import math
 
 SERVICOS = ["frontend-proxy", "frontend", "product-catalog", "cart",
             "recommendation", "currency", "checkout", "shipping"]
-POR_WORKER = 1000   # taxa máxima por worker do telemetrygen; acima disso, mais workers
+POR_WORKER = 1000   # itens por segundo de cada worker do telemetrygen; acima disso, mais workers
 FILHOS = 4          # 1 span pai e 4 filhos, perto da média de 5,1 spans por trace
 
 # corpo de 200 bytes no formato de um log de acesso, perto da média de 207 bytes da Demo
@@ -53,15 +55,18 @@ ATRIBUTOS_RECURSO = [
 def argumentos(par, servico, taxa, duracao):
     """Argumentos do telemetrygen para um serviço, com a taxa em itens por segundo.
 
-    Cada worker envia um item por vez e espera a resposta do Collector, então o número
-    de workers cresce com a taxa, e nenhum deles passa de POR_WORKER itens por segundo.
-    No par de traces, a taxa do telemetrygen conta spans (A1).
+    par é logs ou traces, servico é o nome do serviço simulado e duracao é o tempo de envio
+    em segundos. Cada worker do telemetrygen envia um item por vez e espera a resposta do
+    Collector, então um worker sozinho não passa de cerca de 1000 itens por segundo. Por isso
+    o número de workers cresce com a taxa, e cada um envia a sua parte. No par de traces, a
+    taxa do telemetrygen conta spans, e não traces.
     """
+    # menor número de workers em que nenhum passa de POR_WORKER, e a taxa de cada um
     workers = max(1, math.ceil(taxa / POR_WORKER))
     por_worker = max(1, round(taxa / workers))
     comum = ["--rate", str(por_worker), "--workers", str(workers),
              "--duration", f"{duracao}s", "--service", servico]
-    for atributo in ATRIBUTOS_RECURSO:
+    for atributo in ATRIBUTOS_RECURSO:          # atributos do recurso, iguais nos dois pares
         comum += ["--otlp-attributes", atributo]
     if par == "logs":
         args = ["logs", *comum, "--body", CORPO_LOG]
@@ -69,6 +74,6 @@ def argumentos(par, servico, taxa, duracao):
     else:
         args = ["traces", *comum, "--child-spans", str(FILHOS)]
         atributos = ATRIBUTOS_SPAN
-    for atributo in atributos:
+    for atributo in atributos:                  # atributos de cada log ou span
         args += ["--telemetry-attributes", atributo]
     return args

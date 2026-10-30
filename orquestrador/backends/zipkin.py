@@ -1,3 +1,4 @@
+"""Zipkin: backend de traces que também guarda os spans no Elasticsearch."""
 from backends.jaeger import Jaeger
 
 
