@@ -71,7 +71,8 @@ def esvaziar_cache():
         )
 
 
-def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=None):
+def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=None,
+             config_collector=None):
     """Executa o roteiro completo. carga é uma função sem argumentos que aplica a carga.
 
     antes roda depois do backend pronto e antes da medição, como a subida da Demo. fechar
@@ -79,8 +80,12 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
     que geram telemetria. depois roda depois da leitura dos contadores do Collector, como a
     parada da Demo. exportador
     limita a contagem de enviados a um exportador, quando o Collector tem mais de um.
+    config_collector troca o arquivo de par do Collector isolado, como no experimento de
+    consulta, que lê arquivos fixos de logs.
     """
     classe, par_collector = FERRAMENTAS[execucao.ferramenta]
+    if config_collector and par_collector:
+        par_collector = config_collector
     backend = classe()
     usa_collector = par_collector is not None and not execucao.demo  # Collector isolado
     le_collector = usa_collector or execucao.demo   # contadores na porta 8888 da instância 2

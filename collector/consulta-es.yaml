@@ -1,0 +1,24 @@
+# Experimento de consulta, par de logs com o Elasticsearch: lê os arquivos fixos de logs gerados pelo
+# flog (P7). O nome de cada arquivo vira o service.name do recurso, guardado no campo
+# resource.attributes.service.name. Assim, os 100 arquivos são 100 serviços, cada um com 1% dos logs.
+receivers:
+  filelog:
+    include: [/var/log/flog/*.log]
+    start_at: beginning
+    include_file_name: true
+    operators:
+      - type: regex_parser
+        parse_from: attributes["log.file.name"]
+        regex: '^(?P<servico>.+)\.log$'
+      - type: move
+        from: attributes.servico
+        to: resource["service.name"]
+exporters:
+  elasticsearch:
+    endpoint: http://elasticsearch:9200
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors: [memory_limiter, batch]
+      exporters: [elasticsearch]
