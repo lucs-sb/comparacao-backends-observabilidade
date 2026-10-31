@@ -7,17 +7,21 @@ essas consultas misturaria o custo de começar do zero com o desempenho normal d
 No piloto, a latência caiu ao longo das 30 repetições em quase todas as consultas. Nos logs, a
 queda foi de cerca de 1%. No Jaeger e no Zipkin, foi de 17% a 32% e ainda continuava no fim.
 Por isso o tamanho do aquecimento não é fixo: as repetições seguem em blocos de 10, e o
-aquecimento termina quando a mediana de cada consulta varia no máximo 5% entre dois blocos
-seguidos. Se isso não acontecer em 300 repetições, a medição começa assim mesmo e o resumo
-marca o aquecimento como incompleto. As repetições do aquecimento ficam em aquecimento.csv.
+aquecimento termina quando as medianas de cada consulta nos três últimos blocos ficam dentro
+de 5% umas das outras. Três blocos são 30 repetições, o mesmo tamanho da medição. Comparar só
+dois blocos seguidos não basta: no Jaeger, a latência caiu de 3% a 5% por bloco durante quase
+100 repetições, uma queda que passava bloco a bloco e se acumulava na medição. Se a condição
+não for atingida em 500 repetições, a medição começa assim mesmo e o resumo marca o
+aquecimento como incompleto. As repetições do aquecimento ficam em aquecimento.csv.
 """
 import csv
 import json
 import statistics
 
 BLOCO = 10        # repetições por bloco
-VARIACAO = 0.05   # variação máxima da mediana entre dois blocos seguidos
-MAXIMO = 30       # blocos, ou 300 repetições
+JANELA = 3        # blocos comparados, ou 30 repetições, o tamanho da medição
+VARIACAO = 0.05   # diferença máxima entre a maior e a menor mediana da janela
+MAXIMO = 50       # blocos, ou 500 repetições
 
 
 class Aquecimento:
@@ -52,11 +56,13 @@ class Aquecimento:
             return False   # o bloco ainda não fechou
         medianas = {c: statistics.median(t) for c, t in self.tempos.items()}
         self.tempos = {}
-        anterior = self.blocos[-1] if self.blocos else None
         self.blocos.append(medianas)
-        # estável quando todas as consultas variaram no máximo VARIACAO desde o bloco anterior
-        estavel = anterior is not None and all(
-            abs(m / anterior[c] - 1) <= VARIACAO for c, m in medianas.items() if anterior.get(c))
+        # estável quando, em todas as consultas, a maior mediana dos últimos JANELA blocos
+        # passa da menor em no máximo VARIACAO
+        janela = self.blocos[-JANELA:]
+        estavel = len(janela) == JANELA and all(
+            max(b[c] for b in janela) <= (1 + VARIACAO) * min(b[c] for b in janela)
+            for c in medianas)
         if estavel or len(self.blocos) >= MAXIMO:
             self.incompleto = not estavel
             self.encerrar()

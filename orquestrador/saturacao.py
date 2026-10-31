@@ -132,17 +132,23 @@ def rodar_degraus(par, taxas, duracao, pasta):
                 time.sleep(c.AMOSTRAGEM)
             cpu_instancia = c.pct_instancia(instancia_inicio, c.cpu_instancia())
             limite = inicio + duracao + 60   # um minuto de folga para os geradores terminarem
+            presos = False
             try:
                 for processo in processos:
                     processo.wait(timeout=max(1, limite - time.time()))
             except subprocess.TimeoutExpired:
+                # O backend parou de responder, o Collector deixou de aceitar e os envios dos
+                # geradores ficaram presos esperando resposta. É uma forma de saturação, como a
+                # falta de memória do Zipkin, e o degrau é avaliado com as leituras que já tem.
+                presos = True
                 c.remover_geradores()
-                raise RuntimeError(f"os geradores não terminaram no degrau {numero}, "
-                                   f"ver gerador_degrau{numero}.log")
+                c.encerrar(processos)
             finally:
                 registro.close()
             resultado = {"degrau": numero, "inicio": round(inicio, 3), "fim": round(time.time(), 3),
-                         **avaliar(amostras, taxa, cpu_instancia)}
+                         **avaliar(amostras, taxa, cpu_instancia), "geradores_presos": presos}
+            if presos and resultado["estado"] == "ok":
+                resultado["estado"] = "saturado"
             degraus.append(resultado)
             if saida is None:
                 saida = csv.DictWriter(arquivo, fieldnames=list(resultado))
