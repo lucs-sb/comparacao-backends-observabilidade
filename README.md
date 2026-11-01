@@ -238,5 +238,6 @@ Principais campos do `resumo.json`:
 | `saturacao` | vazão máxima, estado do degrau de parada e número de degraus |
 | `disco_liquido_kib` e `bytes_por_item` | disco ocupado pelos dados e por item, no cenário realista |
 | `consultas` | mediana, percentil 95 e variação de cada consulta |
+| `aquecimento` e `espera_memoria_s` | repetições de aquecimento até estabilizar e espera do Loki pela liberação da memória, no experimento de consulta |
 
 Além das pastas das execuções, `resultados/_rodar/` guarda a saída de cada sessão do `rodar.py` e o `historico.jsonl`, com todas as tentativas.

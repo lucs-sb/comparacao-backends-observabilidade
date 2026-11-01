@@ -9,11 +9,12 @@ cada, e 10 traces a mais com o atributo tcc.busca=alvo no serviço consultado. A
 serviço pega 1% dos traces, e a busca por atributo, 1% dos traces desse serviço.
 
 Depois da ingestão, o backend grava tudo e termina as fusões em andamento, para que as
-consultas não disputem recursos com a indexação. Um único usuário do Locust repete as
-consultas num aquecimento não medido, até os tempos estabilizarem (consultas/aquecimento.py),
-e depois mais 30 vezes. Os tempos medidos ficam em tempos.csv na pasta da execução, e o resumo
-traz a variação entre as 10 primeiras e as 10 últimas repetições de cada consulta, para
-conferir que o aquecimento bastou.
+consultas não disputem recursos com a indexação. O Loki também espera o ingester liberar da
+memória os blocos já gravados, para que todas as consultas leiam os dados no mesmo estado.
+Um único usuário do Locust repete as consultas num aquecimento não medido, até os tempos
+estabilizarem (consultas/aquecimento.py), e depois mais 30 vezes. Os tempos medidos ficam em
+tempos.csv na pasta da execução, e o resumo traz a variação entre as 10 primeiras e as 10
+últimas repetições de cada consulta, para conferir que o aquecimento bastou.
 
 Uso, a partir da pasta orquestrador:
     python consultas.py <loki|elasticsearch|jaeger|zipkin> [--repeticao 1] [--experimento consulta]
@@ -232,6 +233,11 @@ def executar_consulta(ferramenta, repeticao, experimento):
               f"{tempos['ingestao_s']} s, acomodando e consultando", flush=True)
         backend.descarregar()
         backend.acomodar()          # sem fusões em andamento durante as consultas
+        inicio = time.time()
+        if not backend.esperar_memoria():
+            # consultas com parte dos dados ainda em memória mediriam outro estado do backend
+            raise RuntimeError("o ingester do Loki não liberou a memória depois da descarga")
+        tempos["espera_memoria_s"] = round(time.time() - inicio)
         inicio = time.time()
         rodar_locust(execucao.pasta, ferramenta)
         tempos["consultas_s"] = round(time.time() - inicio)

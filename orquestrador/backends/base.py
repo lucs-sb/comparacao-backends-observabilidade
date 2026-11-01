@@ -102,3 +102,11 @@ class Backend:
 
         Por padrão não há o que esperar. O Elasticsearch espera as fusões de segmentos.
         """
+
+    def esperar_memoria(self):
+        """Espera o backend liberar da memória os dados já gravados, antes das consultas.
+
+        Por padrão não há o que esperar e a função devolve True. O Loki espera o ingester
+        liberar os blocos descarregados.
+        """
+        return True
