@@ -110,3 +110,11 @@ class Backend:
         liberar os blocos descarregados.
         """
         return True
+
+    def esperar_checkpoint(self):
+        """Espera o backend esvaziar o log de recuperação antes da medida de disco.
+
+        Por padrão não há o que esperar e a função devolve True. O Loki espera um checkpoint
+        do WAL. O Elasticsearch já esvazia o log de transações na descarga.
+        """
+        return True

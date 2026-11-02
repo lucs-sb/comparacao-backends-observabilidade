@@ -203,6 +203,10 @@ def executar(execucao, carga, antes=None, depois=None, exportador=None, fechar=N
     if execucao.medir_disco:
         inicio_acomodacao = time.time()
         backend.acomodar()   # o Elasticsearch espera as fusões de segmentos terminarem
+        if not backend.esperar_checkpoint():
+            # com o WAL cheio, o disco mediria o momento do ciclo de checkpoint, e não os dados
+            raise RuntimeError(f"o {execucao.ferramenta} não fez o checkpoint antes da medida "
+                               "de disco")
         resumo["espera_acomodacao_s"] = round(time.time() - inicio_acomodacao)
         leituras, estavel, espera = medir_disco_estavel(backend)
         resumo["disco_final_kib"] = leituras[-1]

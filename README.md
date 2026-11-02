@@ -70,7 +70,7 @@ Em todas as instâncias, o cAdvisor lê a CPU e a memória de cada contêiner a 
 
 S é a vazão de referência de cada par, a menor vazão máxima entre as duas ferramentas. Assim as duas recebem a mesma carga, e nenhuma é levada além do que aguenta. Nos experimentos de 12 minutos, os 2 primeiros são descartados como aquecimento.
 
-As 400 execuções são feitas em 10 blocos aleatorizados. Cada bloco contém uma repetição de cada uma das 40 combinações de experimento, ferramenta e condição, em ordem sorteada. Isso espalha as ferramentas ao longo do tempo, para que variações de desempenho da nuvem não favoreçam sempre a mesma.
+As 400 execuções são feitas em 10 blocos aleatorizados. Cada bloco contém uma repetição de cada uma das 40 combinações de experimento, ferramenta e condição, em ordem sorteada. Isso espalha as ferramentas ao longo do tempo, para que variações de desempenho da nuvem não favoreçam sempre a mesma. O experimento completo leva cerca de 108 horas de execução contínua.
 
 Cada execução segue o mesmo roteiro, definido em `orquestrador/execucao.py`:
 
@@ -241,3 +241,42 @@ Principais campos do `resumo.json`:
 | `aquecimento` e `espera_memoria_s` | repetições de aquecimento até estabilizar e espera do Loki pela liberação da memória, no experimento de consulta |
 
 Além das pastas das execuções, `resultados/_rodar/` guarda a saída de cada sessão do `rodar.py` e o `historico.jsonl`, com todas as tentativas.
+
+### Análise dos resultados
+
+A análise roda no computador para onde os resultados foram copiados, com as bibliotecas de `requirements-analise.txt`:
+
+```
+pip install -r requirements-analise.txt
+python3 analise/analisar.py resultados
+```
+
+O script gera as tabelas em `analise/tabelas`, em LaTeX e em CSV, e as figuras em PDF em `analise/figuras`. As duas ferramentas de cada par são comparadas pelo teste de Mann-Whitney, com nível de significância de 5%, e o tamanho do efeito é a razão entre as medianas, com Loki, Prometheus e Jaeger como referência. O arquivo `analise/tabelas/verificacao.csv` lista as execuções que merecem atenção, como perda de dados ou carga não sustentada.
+
+Para testar a análise sem os resultados reais, o `analise/simular.py` gera resultados simulados com a mesma estrutura:
+
+```
+python3 analise/simular.py /tmp/simulado
+python3 analise/analisar.py /tmp/simulado --saida /tmp/analise-simulada
+```
+
+## Decisões metodológicas
+
+Os parâmetros foram calibrados num estudo piloto nas mesmas instâncias. As decisões que mais afetam a leitura dos resultados são:
+
+- **Disco medido só no cenário realista.** Os geradores sintéticos repetem o mesmo conteúdo (telemetrygen) ou usam valores aleatórios (avalanche), e nenhum dos dois comprime como dados reais.
+- **Formato dos itens sintéticos igual ao da Demo.** Corpo dos logs com 200 bytes, 7 atributos por log, 8 por span, 17 de recurso e 5 spans por trace, com a carga dividida entre 8 serviços (`orquestrador/formato.py`).
+- **Ferramentas medidas pela capacidade, e não pelas cotas padrão.** Os limites de taxa e de mensagem do Loki foram elevados, e o Jaeger grava no Elasticsearch com 10 workers, o mesmo paralelismo do Collector.
+- **Mesmas condições de armazenamento.** Os índices do Elasticsearch têm 1 shard e 0 réplicas nos três usos, e o Jaeger e o Zipkin têm o mesmo orçamento de memória.
+- **Saturação do VictoriaMetrics como limite inferior.** A instância 3 não gera amostras suficientes para saturá-lo, então a vazão máxima dele é registrada como o maior valor alcançado pelo gerador.
+- **Aquecimento adaptativo nas consultas.** As consultas se repetem, sem medição, em blocos de 10, até as medianas dos três últimos blocos ficarem dentro de 5% entre si, e só então vêm as 30 medidas (`consultas/aquecimento.py`).
+- **Dados acomodados antes das consultas.** O Elasticsearch termina as fusões de segmentos, e o Loki espera o ingester liberar da memória os blocos já gravados em disco. Sem essa espera, a busca textual do Loki mediria cerca de 335 ms ou 155 ms conforme o momento da consulta. Antes da medida de disco do cenário realista, o Loki também espera um checkpoint do WAL, que apaga a cópia sem compressão dos dados já guardados, como o Elasticsearch faz com o log de transações na descarga. Sem essa espera, o WAL ocupava de 7 a 83 MB para os mesmos dados, conforme o momento da medida.
+- **Demo ajustada ao experimento.** Os limites de memória dos serviços da Demo foram dobrados, e a fila do exportador do Elasticsearch no Collector da Demo foi aumentada para acompanhar os envios pequenos e frequentes da aplicação (`demo/`).
+
+## Limitações
+
+- O conteúdo dos dados sintéticos não representa a compressão de dados reais, por isso o disco só é comparado no cenário realista.
+- O disco medido é o dos primeiros minutos de operação. O Prometheus só compacta o WAL em blocos a cada 2 horas, então nos 12 minutos quase todos os dados dele ainda estão no WAL, que pesa mais quando o volume é pequeno.
+- Cada backend roda numa única instância, sem replicação, e os resultados valem para esse porte de máquina.
+- A precisão da vazão máxima é de 10% da estimativa, o tamanho do passo entre degraus.
+- O tráfego entre serviços e os eventos de span da Demo não são reproduzidos nos dados sintéticos.
